@@ -107,7 +107,7 @@ class Step(TypedDict):
 
 
 class StepName(Enum):
-    QUERY_CLARIFICATION = "Query clarification"
+    QUERY_EVALUATION = "Query evaluation"
     QUERY_OPTIMIZATION = "Query optimization"
     PLAN = "Plan"
     FIND_PAPERS = "Find papers"

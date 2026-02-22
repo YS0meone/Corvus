@@ -140,10 +140,10 @@ tools = [find_papers, get_paper_details, retrieve_and_answer_question]
 supervisor_tool_node = ToolNode(tools)
 
 
-# ─── Query clarification ──────────────────────────────────────────────────────
+# ─── Query evaluation ─────────────────────────────────────────────────────────
 
-async def query_clarification(state: SupervisorState):
-    logger.debug("Query clarification node invoked")
+async def query_evaluation(state: SupervisorState):
+    logger.debug("Query evaluation node invoked")
     new_ui_tracking_message = AIMessage(id=str(uuid.uuid4()), content="")
     new_ui_tracking_id = str(uuid.uuid4())
     new_ui_state = {
@@ -152,33 +152,65 @@ async def query_clarification(state: SupervisorState):
         "ui_tracking_id": new_ui_tracking_id
     }
     ui_manager = UIManager.from_state(new_ui_state)
-    ui_manager.update_ui(StepName.QUERY_CLARIFICATION, StepStatus.RUNNING)
+    ui_manager.update_ui(StepName.QUERY_EVALUATION, StepStatus.RUNNING)
 
-    system_prompt = """
-    You are an expert in clarifying user queries for a research assistant.
-    You need to decide if the user's query is clear or it needs clarification.
-    Take the previous messages into account if there is any.
-    Make the decision and provide your reasoning for the decision.
-    """
+    papers = state.get("papers", [])
+    selected_ids = state.get("selected_paper_ids", [])
+    papers_text = _format_papers_for_prompt(papers, selected_ids)
 
-    class QueryIsClear(BaseModel):
-        reasoning: str = Field(description="The reasoning why the user's query is clear")
+    system_prompt = f"""You are a query evaluator for Corvus, an AI research assistant that helps users discover and understand academic papers.
 
-    class QueryNeedsClarification(BaseModel):
-        reasoning: str = Field(description="The reasoning why the user's query needs clarification")
-        clarification: str = Field(description="The clarification for the user's query")
+## What Corvus can do
+1. **Find papers** — search Semantic Scholar for academic papers on a research topic
+2. **Answer questions** — retrieve evidence from user-selected papers and answer scientific questions
 
-    tools_qc = [QueryIsClear, QueryNeedsClarification]
-    structured_model = supervisor_model.bind_tools(tools_qc, tool_choice="any")
+## Papers currently in context ({len(papers)} total — [SELECTED] = chosen for QA)
+{papers_text}
+
+## Your task
+Evaluate the latest user message and return one of five decisions:
+
+- **clear** — the query is valid and specific enough for the system to handle. Proceed.
+- **needs_clarification** — the query is relevant (paper search or scientific Q&A) but too vague to act on.
+  Example: "find papers about AI", "tell me about transformers", "search ML papers".
+  Ask the user to be more specific (topic, methods, time period, authors, etc.). Be friendly, not critical.
+- **unselected_paper** — the user is asking a question about a paper that is visible in the context list above but NOT marked [SELECTED]. Remind them to select it first.
+- **irrelevant** — the query has nothing to do with paper discovery or scientific Q&A (e.g. coding help, weather, casual chat). Briefly explain what Corvus does and invite them to try a research query.
+- **inappropriate** — the query is offensive or harmful. Politely decline.
+
+## Important guidance
+- Use the full conversation history to understand context. A short follow-up like "what about attention?" can be **clear** if prior messages establish the topic.
+- Do NOT be overly strict. "Find papers on attention mechanisms in transformers" is clear even without exact author names.
+- Only flag **needs_clarification** when the topic is genuinely too broad to search meaningfully.
+- For **unselected_paper**: only flag this when the user's question clearly targets a specific paper shown in the context list that isn't selected.
+- Always write `response` in second person, addressing the user directly and warmly.
+"""
+
+    class ClarificationOutput(BaseModel):
+        reasoning: str = Field(description="Brief internal reasoning for the decision")
+        decision: Literal["clear", "needs_clarification", "unselected_paper", "irrelevant", "inappropriate"] = Field(
+            description="The evaluation outcome"
+        )
+        response: str = Field(
+            default="",
+            description=(
+                "Message to show the user. Required for all non-clear decisions. "
+                "Leave empty for 'clear'."
+            )
+        )
+
+    structured_model = supervisor_model.bind_tools([ClarificationOutput], tool_choice="ClarificationOutput")
     msg = await structured_model.ainvoke([
         SystemMessage(content=system_prompt)
     ] + state["messages"])
 
-    response = msg.tool_calls[0]["args"]
+    result = msg.tool_calls[0]["args"]
+    decision = result.get("decision", "clear")
+    response_text = result.get("response", "")
+    logger.info(f"Query evaluation decision='{decision}' — {result.get('reasoning', '')}")
 
-    if "clarification" not in response:
-        logger.info("Query is clear, proceeding to planner")
-        new_steps = ui_manager.update_ui(StepName.QUERY_CLARIFICATION, StepStatus.COMPLETED, True)
+    if decision == "clear":
+        new_steps = ui_manager.update_ui(StepName.QUERY_EVALUATION, StepStatus.COMPLETED, decision=decision)
         return {
             "messages": [new_ui_tracking_message],
             "is_clear": True,
@@ -187,10 +219,9 @@ async def query_clarification(state: SupervisorState):
             "ui_tracking_id": new_ui_tracking_id
         }
     else:
-        logger.info("Query needs clarification, requesting user input")
-        new_steps = ui_manager.update_ui(StepName.QUERY_CLARIFICATION, StepStatus.COMPLETED, False, response["clarification"])
+        new_steps = ui_manager.update_ui(StepName.QUERY_EVALUATION, StepStatus.COMPLETED, decision=decision)
         return {
-            "messages": [new_ui_tracking_message, AIMessage(content=response["clarification"])],
+            "messages": [new_ui_tracking_message, AIMessage(content=response_text)],
             "is_clear": False,
             "steps": new_steps,
             "ui_tracking_message": new_ui_tracking_message,
@@ -198,7 +229,7 @@ async def query_clarification(state: SupervisorState):
         }
 
 
-def should_clarify(state: SupervisorState):
+def should_proceed(state: SupervisorState):
     is_clear = state.get("is_clear", True)
     return "planner" if is_clear else "end"
 
@@ -206,39 +237,76 @@ def should_clarify(state: SupervisorState):
 # ─── Planner ──────────────────────────────────────────────────────────────────
 
 class PlanOutput(BaseModel):
-    reasoning: str = Field(description="Why this plan was chosen")
-    steps: List[Literal["find_papers", "retrieve_and_answer_question"]] = Field(
-        description="Ordered list of steps to execute"
+    reasoning: str = Field(description="Brief reasoning for the chosen plan")
+    plan: Literal["find_only", "qa_only", "find_then_qa"] = Field(
+        description=(
+            "find_only: search for new papers only. "
+            "qa_only: answer a question using the papers already in context. "
+            "find_then_qa: search for papers first, then answer the question."
+        )
     )
 
 
+# Maps the 3 plan labels to the ordered action lists used by the executor
+_PLAN_TO_STEPS: dict[str, list[str]] = {
+    "find_only":    ["find_papers"],
+    "qa_only":      ["retrieve_and_answer_question"],
+    "find_then_qa": ["find_papers", "retrieve_and_answer_question"],
+}
+
+
+def _format_papers_for_prompt(papers: list, selected_ids: list[str]) -> str:
+    """Render papers with title, authors, year, and a truncated abstract."""
+    if not papers:
+        return "  (none yet)"
+    lines = []
+    for p in papers:
+        selected_marker = "[SELECTED] " if p.paperId in selected_ids else ""
+        title = p.title or "Untitled"
+        year = f" ({p.year})" if p.year else ""
+        authors = ""
+        if p.authors:
+            names = [a.get("name", "") for a in p.authors[:3] if isinstance(a, dict)]
+            authors = f" — {', '.join(n for n in names if n)}"
+            if len(p.authors) > 3:
+                authors += " et al."
+        abstract = ""
+        if p.abstract:
+            abstract = "\n    Abstract: " + p.abstract[:200].replace("\n", " ")
+            if len(p.abstract) > 200:
+                abstract += "..."
+        lines.append(f"  {selected_marker}{title}{year}{authors}{abstract}")
+    return "\n".join(lines)
+
+
 async def planner(state: SupervisorState):
-    """Decide the sequence of steps for the current user turn."""
+    """Decide the plan for the current user turn using one of three fixed labels."""
     ui_manager = UIManager.from_state(state)
     logger.info("Planner node invoked")
     ui_manager.update_ui(StepName.PLAN, StepStatus.RUNNING)
 
     papers = state.get("papers", [])
     selected_ids = state.get("selected_paper_ids", [])
-    selected_paper_abstracts = ""
-    if selected_ids:
-        selected_paper_abstracts = get_paper_abstract(papers, selected_ids)
+    papers_text = _format_papers_for_prompt(papers, selected_ids)
 
     plan_prompt = f"""You are a planner for a research assistant system.
+The query has already been validated as research-related by a prior node, so it always concerns finding or understanding academic papers.
 
-The system can perform two actions:
-- "find_papers": search for academic papers matching the user's query
-- "retrieve_and_answer_question": retrieve evidence from selected papers and answer the user's question
+## Your task
+Choose exactly one plan label based on the user's intent:
 
-Rules:
-- If papers are already present AND the user is asking a question about them → ["retrieve_and_answer_question"]
-- If the user only wants to find papers with no question → ["find_papers"]
-- If the user wants to find papers AND ask a question → ["find_papers", "retrieve_and_answer_question"]
-- If neither action fits (e.g. greeting, off-topic) → []
+- **find_only** — the user wants to search for new papers (no question to answer yet)
+- **qa_only** — the user wants to ask a question about papers that are already in context
+- **find_then_qa** — the user wants to find papers AND get a question answered about them
 
-Current papers in context: {len(papers)}
-Selected paper abstracts:
-{selected_paper_abstracts if selected_paper_abstracts else "(none selected)"}
+## Decision guidance
+- Use **qa_only** when the user is asking about the papers that is currently in context.
+- Use **find_only** when the user is only interested in finding papers that is not in the current context and the user does not have any follow up questions.
+- Use **find_then_qa** when the user asks a question about papers that is not in the current context.
+- Use the full conversation history below to resolve references like "these papers", "that method", "the authors mentioned".
+
+## Papers currently in context ({len(papers)} total — [SELECTED] = chosen for QA)
+{papers_text}
 """
 
     structured = supervisor_model.bind_tools([PlanOutput], tool_choice="PlanOutput")
@@ -248,19 +316,11 @@ Selected paper abstracts:
     ])
 
     plan_result = response.tool_calls[0]["args"]
-    steps = plan_result.get("steps", [])
+    plan_label = plan_result.get("plan", "find_only")
     reasoning = plan_result.get("reasoning", "")
-    logger.info(f"Planner chose steps: {steps} — {reasoning}")
+    logger.info(f"Planner chose plan='{plan_label}' — {reasoning}")
 
-    # Derive a human-readable label for the UI
-    if steps == ["retrieve_and_answer_question"]:
-        plan_label = "qa_only"
-    elif steps == ["find_papers"]:
-        plan_label = "find_only"
-    elif steps == ["find_papers", "retrieve_and_answer_question"]:
-        plan_label = "find_then_qa"
-    else:
-        plan_label = "find_only"  # fallback
+    steps = _PLAN_TO_STEPS[plan_label]
 
     new_steps = ui_manager.update_ui(StepName.PLAN, StepStatus.COMPLETED, plan_label)
     return {"plan_steps": steps, "steps": new_steps}
@@ -424,17 +484,17 @@ async def replanner(state: SupervisorState):
 # ─── Graph assembly ───────────────────────────────────────────────────────────
 
 graph = StateGraph(SupervisorState)
-graph.add_node("query_clarification", query_clarification)
+graph.add_node("query_evaluation", query_evaluation)
 graph.add_node("planner", planner)
 graph.add_node("executor", executor)
 graph.add_node("supervisor_tools", supervisor_tool_node)
 graph.add_node("post_tool", post_tool)
 graph.add_node("replanner", replanner)
 
-graph.add_edge(START, "query_clarification")
+graph.add_edge(START, "query_evaluation")
 graph.add_conditional_edges(
-    "query_clarification",
-    should_clarify,
+    "query_evaluation",
+    should_proceed,
     {"planner": "planner", "end": END}
 )
 graph.add_edge("planner", "executor")

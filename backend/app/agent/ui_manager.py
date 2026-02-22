@@ -20,12 +20,23 @@ def get_template_step(step_name: StepName, step_status: StepStatus) -> Step:
     }
 
 
-def get_update_query_clarification_step(step_name: StepName, step_status: StepStatus, is_clear: bool = True, *args: str):
+def get_update_query_evaluation_step(step_name: StepName, step_status: StepStatus, decision: str = "clear", **kwargs):
     template_step = get_template_step(step_name, step_status)
     if step_status == StepStatus.RUNNING:
-        template_step["description"] = "Checking if query is clear..."
+        template_step["description"] = "Evaluating query..."
     elif step_status == StepStatus.COMPLETED:
-        template_step["description"] = "The query is clear." if is_clear else "The query is unclear. Ask for clarification"
+        if decision == "clear":
+            template_step["description"] = "Query is valid — proceeding."
+        elif decision == "needs_clarification":
+            template_step["description"] = "Query too vague — asked user for clarification."
+        elif decision == "unselected_paper":
+            template_step["description"] = "Query targets a paper not yet selected — reminded user to select it."
+        elif decision == "irrelevant":
+            template_step["description"] = "Query is off-topic — explained what Corvus can do."
+        elif decision == "inappropriate":
+            template_step["description"] = "Query is inappropriate — declined."
+        else:
+            template_step["description"] = f"Evaluation result: {decision}."
     else:
         raise ValueError(f"Invalid step status: {step_status}")
     return template_step
@@ -91,9 +102,9 @@ def get_update_retrieve_and_answer_question_step(step_name: StepName, step_statu
         raise ValueError(f"Invalid step status: {step_status}")
     return template_step
 
-def get_update_step(step_name: StepName, step_status: StepStatus, *args: tuple[str, ...]):
-    if step_name == StepName.QUERY_CLARIFICATION:
-        return get_update_query_clarification_step(step_name, step_status, *args)
+def get_update_step(step_name: StepName, step_status: StepStatus, *args, **kwargs):
+    if step_name == StepName.QUERY_EVALUATION:
+        return get_update_query_evaluation_step(step_name, step_status, *args, **kwargs)
     elif step_name == StepName.QUERY_OPTIMIZATION:
         return get_update_query_optimization_step(step_name, step_status, *args)
     elif step_name == StepName.PLAN:
@@ -117,8 +128,8 @@ class UIManager:
     def from_state(cls, state: SupervisorState) -> "UIManager":
         return cls(state.get("steps", []), state.get("ui_tracking_message", AIMessage(id=str(uuid.uuid4()), content="")), state.get("ui_tracking_id", str(uuid.uuid4())))
 
-    def update_ui(self, step_name: StepName, step_status: StepStatus, *args: tuple[str, ...]) -> List[Step]:
-        new_step = get_update_step(step_name, step_status, *args)
+    def update_ui(self, step_name: StepName, step_status: StepStatus, *args, **kwargs) -> List[Step]:
+        new_step = get_update_step(step_name, step_status, *args, **kwargs)
         for i, step in enumerate(self.steps):
             if step["id"] == step_name:
                 self.steps[i] = new_step
