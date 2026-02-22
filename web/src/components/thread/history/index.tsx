@@ -26,14 +26,36 @@ function formatDate(dateStr: string): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+function ThreadListSkeleton() {
+  return (
+    <div className="flex-1 px-2 py-2 space-y-1">
+      {[80, 60, 72, 55, 68].map((w, i) => (
+        <div key={i} className="px-3 py-2 rounded-md">
+          <div
+            className="h-3.5 rounded bg-muted-foreground/15 animate-pulse mb-1.5"
+            style={{ width: `${w}%` }}
+          />
+          <div className="h-2.5 rounded bg-muted-foreground/10 animate-pulse w-16" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ThreadList({
   threads,
+  threadsLoading,
   onThreadClick,
 }: {
   threads: Thread[];
+  threadsLoading: boolean;
   onThreadClick?: () => void;
 }) {
   const [threadId, setThreadId] = useQueryState("threadId");
+
+  if (threadsLoading) {
+    return <ThreadListSkeleton />;
+  }
 
   if (threads.length === 0) {
     return (
@@ -170,11 +192,13 @@ function UserSection() {
 
 function SidebarContent({
   threads,
+  threadsLoading,
   onClose,
   onNewThread,
   onThreadClick,
 }: {
   threads: Thread[];
+  threadsLoading: boolean;
   onClose: () => void;
   onNewThread: () => void;
   onThreadClick?: () => void;
@@ -206,7 +230,7 @@ function SidebarContent({
           </Button>
         </div>
       </div>
-      <ThreadList threads={threads} onThreadClick={onThreadClick} />
+      <ThreadList threads={threads} threadsLoading={threadsLoading} onThreadClick={onThreadClick} />
       <UserSection />
     </>
   );
@@ -220,7 +244,7 @@ export default function ThreadHistory() {
     parseAsBoolean.withDefault(false),
   );
 
-  const { getThreads, threads, setThreads, setThreadsLoading } = useThreads();
+  const { getThreads, threads, setThreads, threadsLoading, setThreadsLoading } = useThreads();
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -240,6 +264,7 @@ export default function ThreadHistory() {
       <div className="hidden lg:flex flex-col border-r border-border h-screen w-[260px] shrink-0 bg-muted/20">
         <SidebarContent
           threads={threads}
+          threadsLoading={threadsLoading}
           onClose={handleClose}
           onNewThread={handleNewThread}
         />
@@ -260,7 +285,7 @@ export default function ThreadHistory() {
                 Conversations
               </SheetTitle>
             </SheetHeader>
-            <ThreadList threads={threads} onThreadClick={handleClose} />
+            <ThreadList threads={threads} threadsLoading={threadsLoading} onThreadClick={handleClose} />
             <UserSection />
           </SheetContent>
         </Sheet>
