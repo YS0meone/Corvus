@@ -133,14 +133,16 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
 
   useEffect(() => {
     const fetchToken = async () => {
-      const token = await getToken();
+      // skipCache: true forces Clerk to mint a new JWT every call.
+      // Without it, getToken() returns the same cached token until expiry,
+      // so clerkToken state never changes, useStream's client is never
+      // recreated, and requests fail with 403 "Signature has expired".
+      const token = await getToken({ skipCache: true });
       setClerkToken(token);
     };
     fetchToken();
-    // Clerk session JWTs expire after 60 seconds by default. getToken()
-    // transparently re-mints when needed; we poll every 50 s to keep
-    // the cached clerkToken state (and thus defaultHeaders) always fresh.
-    const interval = setInterval(fetchToken, 50 * 1000);
+    // Tokens expire after 60 s; refresh every 45 s to stay well inside that.
+    const interval = setInterval(fetchToken, 45 * 1000);
     return () => clearInterval(interval);
   }, [getToken]);
 
