@@ -1,59 +1,61 @@
 import asyncio
+import logging
 from langchain.chat_models import init_chat_model
 from langchain.messages import SystemMessage
 from langgraph.graph import START, END, StateGraph
 from langgraph.prebuilt import ToolNode
-from app.tools.search import s2_search_papers, tavily_research_overview, get_paper_details, forward_snowball, backward_snowball
+from app.tools.search import s2_search_papers, tavily_research_overview, forward_snowball, backward_snowball
 from app.core.config import settings
-from app.core.config import settings
+from app.agent.utils import get_paper_info_text
 from rerankers import Reranker, Document
 from app.core.schema import S2Paper
-from pydantic import BaseModel
-from typing import List, Annotated
+from typing import List, Annotated, Union
 from langchain.agents import AgentState
 from langgraph.prebuilt import tools_condition
+
+logger = logging.getLogger(__name__)
 
 
 MAX_PAPER_LIST_LENGTH = 20
 
 model = init_chat_model(model=settings.PF_AGENT_MODEL_NAME)
 
-tools = [tavily_research_overview, s2_search_papers, get_paper_details, forward_snowball, backward_snowball]
+tools = [tavily_research_overview, s2_search_papers, forward_snowball, backward_snowball]
 search_agent_model = model.bind_tools(tools)
 
 # Initialize Cohere reranker
 if not settings.COHERE_API_KEY:
-    print("[WARNING] COHERE_API_KEY not set in .env. Reranking will be skipped.")
+    logger.warning("COHERE_API_KEY not set. Reranking will be skipped.")
     ranker = None
 else:
     try:
         ranker = Reranker("cohere", api_key=settings.COHERE_API_KEY)
-        print(f"[OK] Cohere reranker initialized successfully")
+        logger.info("Cohere reranker initialized successfully")
     except Exception as e:
-        print(f"[ERROR] Failed to initialize Cohere reranker: {e}")
-        print(f"[WARNING] Reranking will be skipped.")
+        logger.error("Failed to initialize Cohere reranker: %s", e)
         ranker = None
 
 
-class ClearItem(BaseModel):
-    """sentinel item to clear the list"""
-    pass
+class Replace:
+    def __init__(self, value: list):
+        self.value = value
 
-def new_paper_reducer(current: list, update: list | ClearItem) -> list:
-    if isinstance(update, ClearItem):
-        return []
-    return current + update
+def flexible_reducer(current: list, update: Union[list, "Replace"]) -> list:
+    if isinstance(update, Replace):
+        return update.value
+    seen = {p.paperId for p in current}
+    return current + [p for p in update if p.paperId not in seen]
 
 class SearchAgentState(AgentState):
     optimized_query: str
-    papers: List[S2Paper]
+    papers: Annotated[List[S2Paper], flexible_reducer]
     iter: int
-    new_papers: Annotated[List[S2Paper], new_paper_reducer]
 
 
 
 async def search_agent_node(state: SearchAgentState):
-    search_query_prompt = """
+    paper_info_text = get_paper_info_text(state.get("papers", []))
+    search_query_prompt = f"""
     You are a senior research assistant who helps finding academic papers based on a user query.
 
     Your goal is to utilize the provided tools to help user find the most relevant papers to the user query.
@@ -70,15 +72,15 @@ async def search_agent_node(state: SearchAgentState):
        - backward_snowball: Find papers that CITE your seed papers (recent work building on them)
        Use these when you've found good papers and want to explore their citation network.
 
-    4. Paper details (get_paper_details): Check what papers are currently in your paper list.
-
     Strategy tips:
     - If the user query is about a specific paper, use the academic database search with the title/author filters to find the paper and quickly finish the task.
     - If the user query is more general, you should follow the following strategy:
         - Start with web search if topic is unfamiliar to get context
         - Use academic database for targeted searches with filters
         - Use citation chasing to expand from good seed papers you've found
-        - Check paper details to avoid redundant searches
+
+    Current papers in your list:
+    {paper_info_text}
 
     Reflect on past actions and completed steps to decide what to do next.
     If you have sufficient results, stop and provide a concise summary of what you found.
@@ -93,64 +95,40 @@ async def search_agent_node(state: SearchAgentState):
 search_tool_node = ToolNode(tools)
 
 async def rerank_node(state: SearchAgentState):
-    if len(state.get("new_papers", [])) == 0:
-        return {}
+    papers = state.get("papers", [])
+    iter = state.get("iter", 0) + 1
 
-    existing_papers = state.get("papers", [])
+    if not papers:
+        return {"iter": iter}
 
-    all_papers = list(existing_papers) + list(state.get("new_papers", []))
-    unique_papers = {p.paperId: p for p in all_papers}
-    deduped_list = list(unique_papers.values())
+    user_query = state.get("optimized_query", "")
 
-    if len(deduped_list) > 0:
-        user_query = state.get("optimized_query", "")
+    if not user_query or not user_query.strip():
+        logger.warning("Skipping rerank: no query provided")
+        return {"papers": Replace(papers[:MAX_PAPER_LIST_LENGTH]), "iter": iter}
 
-        # Skip reranking if no query or no ranker
-        if not user_query or not user_query.strip():
-            print("⚠️  Skipping rerank: no query provided")
-            final_papers = deduped_list[:MAX_PAPER_LIST_LENGTH]
-        elif ranker is None:
-            print("⚠️  Skipping rerank: COHERE_API_KEY not set")
-            final_papers = deduped_list[:MAX_PAPER_LIST_LENGTH]
-        else:
-            try:
-                docs = []
-                for paper in deduped_list:
-                    # Handle None values in paper data
-                    title = paper.title or "No title"
-                    abstract = paper.abstract or "No abstract"
-                    authors = paper.authors or []
-                    content_text = f"Title: {title}\nAbstract: {abstract}\nAuthors: {authors}"
-                    docs.append(Document(
-                        text=content_text,
-                        doc_id=str(paper.paperId),
-                        metadata=paper.model_dump()
-                    ))
+    if ranker is None:
+        logger.warning("Skipping rerank: COHERE_API_KEY not set")
+        return {"papers": Replace(papers[:MAX_PAPER_LIST_LENGTH]), "iter": iter}
 
-                print(f"🔄 Reranking {len(docs)} papers with query: {user_query[:50]}...")
+    try:
+        docs = [
+            Document(
+                text=f"Title: {p.title or 'No title'}\nAbstract: {p.abstract or 'No abstract'}\nAuthors: {p.authors or []}",
+                doc_id=str(p.paperId),
+                metadata=p.model_dump(),
+            )
+            for p in papers
+        ]
+        logger.debug("Reranking %d papers with query: %s...", len(docs), user_query[:50])
+        reranked = await asyncio.to_thread(ranker.rank, query=user_query, docs=docs)
+        final_papers = [S2Paper.model_validate(m.document.metadata) for m in reranked.top_k(k=MAX_PAPER_LIST_LENGTH)]
+        logger.info("Reranking successful: %d papers", len(final_papers))
+    except Exception as e:
+        logger.error("Reranking failed: %s: %s", type(e).__name__, e)
+        final_papers = papers[:MAX_PAPER_LIST_LENGTH]
 
-                try:
-                    reranked_results = await asyncio.to_thread(ranker.rank, query=user_query, docs=docs)
-                    top_matches = reranked_results.top_k(k=MAX_PAPER_LIST_LENGTH)
-                except KeyError as ke:
-                    print(f"🔍 KeyError in reranking: {ke}")
-                    print(f"🔍 This suggests Cohere API returned an error response")
-                    print(f"🔍 Check your COHERE_API_KEY environment variable")
-                    raise  # Re-raise to go to outer except block
-
-                final_papers = []
-                for match in top_matches:
-                    paper_obj = S2Paper.model_validate(match.document.metadata)
-                    final_papers.append(paper_obj)
-                print(f"[OK] Reranking successful: {len(final_papers)} papers")
-            except Exception as e:
-                print(f"[ERROR] Reranking failed: {type(e).__name__}: {e}")
-                print(f"[INFO] Falling back to original order (top {MAX_PAPER_LIST_LENGTH})")
-                final_papers = deduped_list[:MAX_PAPER_LIST_LENGTH]
-    else:
-        final_papers = []
-
-    return {"papers": final_papers, "new_papers": ClearItem(), "iter": state.get("iter", 0) + 1}
+    return {"papers": Replace(final_papers), "iter": iter}
 
 def my_tools_condition(state: SearchAgentState):
     if state.get("iter", 0) > 3:

@@ -246,7 +246,7 @@ async def s2_search_papers(
             )
     
     return Command(
-        update={"new_papers": new_results, "messages": [
+        update={"papers": new_results, "messages": [
             ToolMessage(
                 content=f"I found {len(new_results)} new papers for your query.",
                 tool_call_id=tool_call_id
@@ -489,7 +489,7 @@ async def forward_snowball(
         
         return Command(
             update={
-                "new_papers": result_papers,
+                "papers": result_papers,
                 "messages": [ToolMessage(
                     content=f"Found {len(result_papers)} papers cited by the {len(seed_paper_ids)} seed papers.",
                     tool_call_id=tool_call_id
@@ -654,7 +654,7 @@ async def backward_snowball(
         
         return Command(
             update={
-                "new_papers": result_papers,
+                "papers": result_papers,
                 "messages": [ToolMessage(
                     content=f"Found {len(result_papers)} papers that cite the {len(seed_paper_ids)} seed papers.",
                     tool_call_id=tool_call_id

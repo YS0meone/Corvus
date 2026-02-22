@@ -1,10 +1,11 @@
 import asyncio
+import logging
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage, SystemMessage
 from langgraph.graph import START, END, StateGraph
 from app.agent.states import PaperFinderState
 from langgraph.prebuilt import ToolNode
-from app.tools.search import s2_search_papers, tavily_research_overview, get_paper_details, forward_snowball, backward_snowball
+from app.tools.search import s2_search_papers, tavily_research_overview, forward_snowball, backward_snowball
 from app.core.config import settings
 from app.agent.utils import get_paper_info_text
 from rerankers import Reranker, Document
@@ -14,22 +15,24 @@ from typing import List, Tuple, Annotated, Union
 from langchain.agents import AgentState
 from langgraph.prebuilt import tools_condition
 
+logger = logging.getLogger(__name__)
+
 
 if not settings.COHERE_API_KEY:
-    print("[WARNING] COHERE_API_KEY not set. Reranking will be skipped.")
+    logger.warning("COHERE_API_KEY not set. Reranking will be skipped.")
     ranker = None
 else:
     try:
         ranker = Reranker("cohere", api_key=settings.COHERE_API_KEY)
     except Exception as e:
-        print(f"[ERROR] Failed to initialize Cohere reranker: {e}")
+        logger.error("Failed to initialize Cohere reranker: %s", e)
         ranker = None
 
-tools = [tavily_research_overview, s2_search_papers, get_paper_details, forward_snowball, backward_snowball]
+tools = [tavily_research_overview, s2_search_papers, forward_snowball, backward_snowball]
 tool_node = ToolNode(tools)
 
 MAX_ITER = 3
-MAX_PAPER_LIST_LENGTH = 20
+MAX_PAPER_LIST_LENGTH = 35
 
 model = init_chat_model(model=settings.PF_AGENT_MODEL_NAME)
 search_agent_model = model.bind_tools(tools)
@@ -85,7 +88,7 @@ async def planner(state: PaperFinderState):
         ])
         return {"plan_steps": response.plan_steps, "plan_reasoning": response.plan_reasoning}
     except Exception as e:
-        print(f"Error in planner: {e}")
+        logger.error("Error in planner: %s", e)
         return {
             "plan_steps": [
                 "Use web search to understand the research topic",
@@ -163,7 +166,7 @@ async def replan_agent(state: PaperFinderState):
         else:
             return {"goal_achieved": False, "plan_steps": response.replan_reply.plan_steps, "plan_reasoning": response.replan_reply.plan_reasoning}
     except Exception as e:
-        print(f"Error in replan_agent: {e}")
+        logger.error("Error in replan_agent: %s", e)
         # Fallback to existing plan
         current_plan = state.get("plan_steps", [])
         return {
@@ -172,48 +175,43 @@ async def replan_agent(state: PaperFinderState):
             "plan_reasoning": "Continuing with adjusted plan due to replanning error"
         }
 
-class ClearItem(BaseModel):
-    """sentinel item to clear the list"""
-    pass
-
-def new_paper_reducer(current: list, update: list | ClearItem) -> list:
-    if isinstance(update, ClearItem):
-        return []
-    return current + update
+def flexible_reducer(current: list, update: list) -> list:
+    seen = {p.paperId for p in current}
+    return current + [p for p in update if p.paperId not in seen]
 
 class SearchAgentState(AgentState):
     optimized_query: str
-    papers: List[S2Paper]
+    papers: Annotated[List[S2Paper], flexible_reducer]
     plan_steps: List[str]
-    new_papers: Annotated[List[S2Paper], new_paper_reducer]
 
 async def search_agent_node(state: SearchAgentState):
-    search_query_prompt = """
+    paper_info_text = get_paper_info_text(state.get("papers", []))
+    search_query_prompt = f"""
     You are a senior research assistant who helps finding academic papers based on a user query.
     You are provided with a plan for your search from your mentor.
 
     Your goal is to utilize the provided tools to finish the current step of the plan.
-    
+
     You have access to multiple search methods:
-    1. General web search (tavily_research_overview): Use this when the research topic is general or unfamiliar. 
+    1. General web search (tavily_research_overview): Use this when the research topic is general or unfamiliar.
        This helps you understand the research landscape and identify famous/seminal papers you shouldn't miss.
-    
+
     2. Academic database search (s2_search_papers): Search Semantic Scholar's database of 200M+ papers.
        Use keyword queries, filters by year, venue, citation count, etc. to find relevant papers.
-    
+
     3. Citation chasing tools:
        - forward_snowball: Find papers that your seed papers CITE (their references/foundations)
        - backward_snowball: Find papers that CITE your seed papers (recent work building on them)
        Use these when you've found good papers and want to explore their citation network.
-    
-    4. Paper details (get_paper_details): Check what papers are currently in your paper list.
-    
+
     Strategy tips:
     - Start with web search if topic is unfamiliar to get context
     - Use academic database for targeted searches with filters
     - Use citation chasing to expand from good seed papers you've found
-    - Check paper details to avoid redundant searches
-    
+
+    Current papers in your list:
+    {paper_info_text}
+
     Reflect on past actions and completed steps to decide what to do next.
     If you have sufficient results, stop and provide a concise summary of what you found.
     """
@@ -226,58 +224,37 @@ async def search_agent_node(state: SearchAgentState):
 
 search_tool_node = ToolNode(tools)
 
-async def rerank_node(state: SearchAgentState):
-    if len(state.get("new_papers", [])) == 0:
-        return {}
+async def rerank_papers(papers: List[S2Paper], query: str) -> List[S2Paper]:
+    if not papers:
+        return []
 
-    existing_papers = state.get("papers", [])
-
-    all_papers = list(existing_papers) + list(state.get("new_papers", []))
-    unique_papers = {p.paperId: p for p in all_papers}
-    deduped_list = list(unique_papers.values())
-
-    if not deduped_list:
-        return {"papers": [], "new_papers": ClearItem()}
-
-    user_query = state.get("optimized_query", "")
-
-    if not user_query or not user_query.strip() or ranker is None:
-        return {"papers": deduped_list[:MAX_PAPER_LIST_LENGTH], "new_papers": ClearItem()}
+    if not query or not query.strip() or ranker is None:
+        return papers[:MAX_PAPER_LIST_LENGTH]
 
     try:
-        docs = []
-        for paper in deduped_list:
-            title = paper.title or "No title"
-            abstract = paper.abstract or "No abstract"
-            authors = paper.authors or []
-            content_text = f"Title: {title}\nAbstract: {abstract}\nAuthors: {authors}"
-            docs.append(Document(
-                text=content_text,
-                doc_id=str(paper.paperId),
-                metadata=paper.model_dump()
-            ))
-
-        reranked_results = await asyncio.to_thread(ranker.rank, query=user_query, docs=docs)
-        top_matches = reranked_results.top_k(k=MAX_PAPER_LIST_LENGTH)
-
-        final_papers = [S2Paper.model_validate(m.document.metadata) for m in top_matches]
+        docs = [
+            Document(
+                text=f"Title: {p.title or 'No title'}\nAbstract: {p.abstract or 'No abstract'}\nAuthors: {p.authors or []}",
+                doc_id=str(p.paperId),
+                metadata=p.model_dump(),
+            )
+            for p in papers
+        ]
+        reranked = await asyncio.to_thread(ranker.rank, query=query, docs=docs)
+        return [S2Paper.model_validate(m.document.metadata) for m in reranked.top_k(k=MAX_PAPER_LIST_LENGTH)]
     except Exception as e:
-        print(f"Reranking failed: {e}")
-        final_papers = deduped_list[:MAX_PAPER_LIST_LENGTH]
-
-    return {"papers": final_papers, "new_papers": ClearItem()}
+        logger.error("Reranking failed: %s", e)
+        return papers[:MAX_PAPER_LIST_LENGTH]
 
 search_graph = StateGraph(SearchAgentState)
 search_graph.add_node("search_agent", search_agent_node)
 search_graph.add_node("search_tool", search_tool_node)
-search_graph.add_node("rerank", rerank_node)
 search_graph.add_edge(START, "search_agent")
 search_graph.add_conditional_edges("search_agent", tools_condition, {
-        "tools": "search_tool", 
+        "tools": "search_tool",
         "__end__": END
     })
-search_graph.add_edge("search_tool", "rerank")
-search_graph.add_edge("rerank", "search_agent")
+search_graph.add_edge("search_tool", "search_agent")
 search_graph = search_graph.compile()
 
 async def search_agent(state: PaperFinderState):
@@ -300,6 +277,12 @@ async def search_agent(state: PaperFinderState):
 
     response = await search_graph.ainvoke(search_agent_state)
 
+    # Rerank once after the full plan step completes, not after every tool call
+    papers = await rerank_papers(
+        response.get("papers", state.get("papers", [])),
+        state.get("optimized_query", ""),
+    )
+
     if isinstance(response["messages"][-1].content, list):
         content = " ".join([item["text"] for item in response["messages"][-1].content])
     elif isinstance(response["messages"][-1].content, str):
@@ -307,13 +290,13 @@ async def search_agent(state: PaperFinderState):
     else:
         content = str(response["messages"][-1].content)
     step_summary = (current_goal, content)
-    return {"papers": response["papers"], "completed_steps": [step_summary], "iter": iter + 1}
+    return {"papers": papers, "completed_steps": [step_summary], "iter": iter + 1}
 
 
 def should_clarify(state: PaperFinderState):
     is_clear = state.get("is_clear", True)
     route = "optimize" if is_clear else "end"
-    print(f"[DEBUG] should_clarify: is_clear={is_clear}, routing to '{route}'")
+    logger.debug("should_clarify: is_clear=%s, routing to '%s'", is_clear, route)
     return route
 
 def should_continue(state: PaperFinderState):
