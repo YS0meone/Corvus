@@ -1,3 +1,4 @@
+import asyncio
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage, SystemMessage
 from langgraph.graph import START, END, StateGraph
@@ -14,7 +15,15 @@ from langchain.agents import AgentState
 from langgraph.prebuilt import tools_condition
 
 
-ranker = Reranker("cohere", api_key=settings.COHERE_API_KEY)
+if not settings.COHERE_API_KEY:
+    print("[WARNING] COHERE_API_KEY not set. Reranking will be skipped.")
+    ranker = None
+else:
+    try:
+        ranker = Reranker("cohere", api_key=settings.COHERE_API_KEY)
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize Cohere reranker: {e}")
+        ranker = None
 
 tools = [tavily_research_overview, s2_search_papers, get_paper_details, forward_snowball, backward_snowball]
 tool_node = ToolNode(tools)
@@ -25,7 +34,7 @@ MAX_PAPER_LIST_LENGTH = 20
 model = init_chat_model(model=settings.PF_AGENT_MODEL_NAME)
 search_agent_model = model.bind_tools(tools)
 
-def planner(state: PaperFinderState):
+async def planner(state: PaperFinderState):
     system_prompt = """
     You are a senior researcher. The goal is to create a plan for your research assistant to find the most relevant papers to the user query.
     You are provided with a user query and potentially a list of papers known to the research assistant.
@@ -70,7 +79,7 @@ def planner(state: PaperFinderState):
     structured_model = model.with_structured_output(Plan)
 
     try:
-        response = structured_model.invoke([
+        response = await structured_model.ainvoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
         ])
@@ -89,7 +98,7 @@ def planner(state: PaperFinderState):
 def completed_steps_formatter(completed_steps: List[Tuple[str, str]]) -> List[str]:
     return ["\n".join([f"Task:{task}\nResult:{result}" for task, result in completed_steps])]
 
-def replan_agent(state: PaperFinderState):
+async def replan_agent(state: PaperFinderState):
     system_prompt = """
     You are a senior researcher. The goal is to update a plan for your research assistant to find the most relevant papers to the user query.
     You are provided with a user query, the retrieved papers, the current plan to retrieve the papers and the steps your assistant has completed.
@@ -145,7 +154,7 @@ def replan_agent(state: PaperFinderState):
     structured_model = model.with_structured_output(Replan)
 
     try:
-        response = structured_model.invoke([
+        response = await structured_model.ainvoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
         ])
@@ -178,7 +187,7 @@ class SearchAgentState(AgentState):
     plan_steps: List[str]
     new_papers: Annotated[List[S2Paper], new_paper_reducer]
 
-def search_agent_node(state: SearchAgentState):
+async def search_agent_node(state: SearchAgentState):
     search_query_prompt = """
     You are a senior research assistant who helps finding academic papers based on a user query.
     You are provided with a plan for your search from your mentor.
@@ -209,7 +218,7 @@ def search_agent_node(state: SearchAgentState):
     If you have sufficient results, stop and provide a concise summary of what you found.
     """
 
-    response = search_agent_model.invoke([
+    response = await search_agent_model.ainvoke([
         SystemMessage(content=search_query_prompt),
         *state.get("messages", [])
     ])
@@ -217,41 +226,45 @@ def search_agent_node(state: SearchAgentState):
 
 search_tool_node = ToolNode(tools)
 
-def rerank_node(state: SearchAgentState):
+async def rerank_node(state: SearchAgentState):
     if len(state.get("new_papers", [])) == 0:
         return {}
-    
+
     existing_papers = state.get("papers", [])
-    
+
     all_papers = list(existing_papers) + list(state.get("new_papers", []))
     unique_papers = {p.paperId: p for p in all_papers}
     deduped_list = list(unique_papers.values())
-    
-    if len(deduped_list) > 0:
-        try:
-            docs = []
-            for paper in deduped_list:
-                content_text = f"Title: {paper.title}\nAbstract: {paper.abstract}\nAuthors: {paper.authors}"
-                docs.append(Document(
-                    text=content_text,
-                    doc_id=str(paper.paperId),
-                    metadata=paper.model_dump()
-                ))
-            
-            user_query = state.get("optimized_query", "")
-            reranked_results = ranker.rank(query=user_query, docs=docs)
-            top_matches = reranked_results.top_k(k=MAX_PAPER_LIST_LENGTH)
-            
-            final_papers = []
-            for match in top_matches:
-                paper_obj = S2Paper.model_validate(match.document.metadata)
-                final_papers.append(paper_obj)
-        except Exception as e:
-            print(f"Reranking failed in tool: {e}")
-            final_papers = deduped_list[:MAX_PAPER_LIST_LENGTH]
-    else:
-        final_papers = []
-    
+
+    if not deduped_list:
+        return {"papers": [], "new_papers": ClearItem()}
+
+    user_query = state.get("optimized_query", "")
+
+    if not user_query or not user_query.strip() or ranker is None:
+        return {"papers": deduped_list[:MAX_PAPER_LIST_LENGTH], "new_papers": ClearItem()}
+
+    try:
+        docs = []
+        for paper in deduped_list:
+            title = paper.title or "No title"
+            abstract = paper.abstract or "No abstract"
+            authors = paper.authors or []
+            content_text = f"Title: {title}\nAbstract: {abstract}\nAuthors: {authors}"
+            docs.append(Document(
+                text=content_text,
+                doc_id=str(paper.paperId),
+                metadata=paper.model_dump()
+            ))
+
+        reranked_results = await asyncio.to_thread(ranker.rank, query=user_query, docs=docs)
+        top_matches = reranked_results.top_k(k=MAX_PAPER_LIST_LENGTH)
+
+        final_papers = [S2Paper.model_validate(m.document.metadata) for m in top_matches]
+    except Exception as e:
+        print(f"Reranking failed: {e}")
+        final_papers = deduped_list[:MAX_PAPER_LIST_LENGTH]
+
     return {"papers": final_papers, "new_papers": ClearItem()}
 
 search_graph = StateGraph(SearchAgentState)
@@ -267,7 +280,7 @@ search_graph.add_edge("search_tool", "rerank")
 search_graph.add_edge("rerank", "search_agent")
 search_graph = search_graph.compile()
 
-def search_agent(state: PaperFinderState):
+async def search_agent(state: PaperFinderState):
     iter = state.get("iter", 0)
 
     current_goal = state.get("plan_steps", [])[0]
@@ -275,7 +288,7 @@ def search_agent(state: PaperFinderState):
     user_prompt = f"""
     User query: {state.get("optimized_query", "")}
     Current Goal: {current_goal}
-    Completed Steps: 
+    Completed Steps:
     {completed_steps_formatter(state.get("completed_steps", []))}
     """
     search_agent_state = {
@@ -284,8 +297,8 @@ def search_agent(state: PaperFinderState):
         "papers": state.get("papers", []),
         "messages": [HumanMessage(content=user_prompt)]
     }
-    
-    response = search_graph.invoke(search_agent_state)
+
+    response = await search_graph.ainvoke(search_agent_state)
 
     if isinstance(response["messages"][-1].content, list):
         content = " ".join([item["text"] for item in response["messages"][-1].content])
