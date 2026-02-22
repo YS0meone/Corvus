@@ -47,7 +47,8 @@ def flexible_reducer(current: list, update: Union[list, "Replace"]) -> list:
     return current + [p for p in update if p.paperId not in seen]
 
 class SearchAgentState(AgentState):
-    optimized_query: str
+    search_task: str
+    rerank_query: str
     papers: Annotated[List[S2Paper], flexible_reducer]
     iter: int
 
@@ -101,7 +102,7 @@ async def rerank_node(state: SearchAgentState):
     if not papers:
         return {"iter": iter}
 
-    user_query = state.get("optimized_query", "")
+    user_query = state.get("rerank_query", "")
 
     if not user_query or not user_query.strip():
         logger.warning("Skipping rerank: no query provided")

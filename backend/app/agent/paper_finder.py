@@ -65,16 +65,13 @@ async def planner(state: PaperFinderState):
     """
 
     paper_info_text = get_paper_info_text(state.get("papers", []))
-    user_query = f"""
-    User query: {state['optimized_query']}
-    """
 
     user_prompt = f"""
-    User query: {user_query}
+    Task: {state['search_task']}
     Papers information:
     {paper_info_text}
     """
-    
+
     class Plan(BaseModel):
         plan_reasoning: str = Field(description="The reasoning for the plan you generated")
         plan_steps: List[str] = Field(description="The steps of the plan")
@@ -131,14 +128,11 @@ async def replan_agent(state: PaperFinderState):
     """
 
     paper_info_text = get_paper_info_text(state.get("papers", []))
-    user_query = f"""
-    User query: {state['optimized_query']}
-    """
 
     user_prompt = f"""
-    User query: {user_query}
+    Task: {state['search_task']}
     Current Plan: {state.get("plan_steps", [])}
-    Completed Steps: 
+    Completed Steps:
     {completed_steps_formatter(state.get("completed_steps", []))}
     Papers information:
     {paper_info_text}
@@ -180,7 +174,8 @@ def flexible_reducer(current: list, update: list) -> list:
     return current + [p for p in update if p.paperId not in seen]
 
 class SearchAgentState(AgentState):
-    optimized_query: str
+    search_task: str
+    rerank_query: str
     papers: Annotated[List[S2Paper], flexible_reducer]
     plan_steps: List[str]
 
@@ -263,13 +258,14 @@ async def search_agent(state: PaperFinderState):
     current_goal = state.get("plan_steps", [])[0]
 
     user_prompt = f"""
-    User query: {state.get("optimized_query", "")}
+    Task: {state.get("search_task", "")}
     Current Goal: {current_goal}
     Completed Steps:
     {completed_steps_formatter(state.get("completed_steps", []))}
     """
     search_agent_state = {
-        "optimized_query": state.get("optimized_query", ""),
+        "search_task": state.get("search_task", ""),
+        "rerank_query": state.get("rerank_query", ""),
         "plan_steps": state.get("plan_steps", []),
         "papers": state.get("papers", []),
         "messages": [HumanMessage(content=user_prompt)]
@@ -280,7 +276,7 @@ async def search_agent(state: PaperFinderState):
     # Rerank once after the full plan step completes, not after every tool call
     papers = await rerank_papers(
         response.get("papers", state.get("papers", [])),
-        state.get("optimized_query", ""),
+        state.get("rerank_query", ""),
     )
 
     if isinstance(response["messages"][-1].content, list):

@@ -20,8 +20,9 @@ class SupervisorState(AgentState):
 
 
 class PaperFinderState(MessagesState):
-    optimized_query: Optional[str]
-    plan_steps: List[str]       
+    search_task: Optional[str]   # natural-language goal for the planner + search agent
+    rerank_query: Optional[str]  # keyword-optimized query used only for reranking
+    plan_steps: List[str]
     completed_steps: Annotated[List[Tuple[str, str]], operator.add]
     plan_reasoning: str
     papers: List[Dict[str, Any]]
