@@ -1,6 +1,7 @@
 import uuid
 from langchain_core.tools import tool
 from app.agent.paper_finder_fast import paper_finder_fast_graph
+from app.agent.paper_finder import paper_finder
 from app.agent.qa import qa_graph
 from langgraph.graph import StateGraph
 from app.agent.states import SupervisorState
@@ -28,28 +29,45 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-async def _optimize_for_search(messages: list) -> str:
-    """Derive a keyword-style search query from the full conversation history."""
-    class SearchQueryOutput(BaseModel):
-        search_query: str = Field(
+async def _optimize_for_paper_search(messages: list) -> tuple[str, str]:
+    """
+    Generate two complementary representations of the user's paper-finding intent:
+    - search_task: natural-language task description for the planner and search agent
+    - rerank_query: keyword-style query used only for semantic reranking
+    """
+    class SearchOptimizationOutput(BaseModel):
+        search_task: str = Field(
             description=(
-                "A keyword-style query for semantic academic paper retrieval. "
+                "A self-contained natural-language task for a research assistant. "
+                "Describe exactly what papers to find in plain English. "
+                "Resolve all pronouns and vague references using prior conversation context. "
+                "Use complete sentences. "
+                "Example: 'Find the PaperQA paper by Lala et al., a question-answering "
+                "system designed for scientific literature retrieval.'"
+            )
+        )
+        rerank_query: str = Field(
+            description=(
+                "A keyword-style query for semantic relevance scoring against paper abstracts. "
                 "5-15 words. Include core concepts, method names, domain terms, "
-                "and any paper/author names mentioned in the conversation. "
-                "Do NOT write a full sentence — use noun phrases and keywords only. "
-                "Example: 'transformer self-attention mechanism NLP Vaswani 2017'"
+                "and any paper/author names. Do NOT write a full sentence. "
+                "Example: 'PaperQA question answering scientific literature Lala 2023'"
             )
         )
 
     system = SystemMessage(content=(
-        "You are an expert at generating academic paper search queries. "
-        "Given the conversation history below, produce a keyword-style search query "
-        "that captures what the user wants to find. "
+        "You are an expert at analysing research requests. "
+        "Given the conversation history, produce two outputs: "
+        "(1) a natural-language task description so a research planner knows exactly what to do, "
+        "and (2) a keyword query for semantic reranking of candidate papers. "
         "Resolve all references (e.g. 'that paper', 'it', 'their method') using context from earlier messages."
     ))
-    structured = supervisor_model.bind_tools([SearchQueryOutput], tool_choice="SearchQueryOutput")
+    structured = supervisor_model.bind_tools(
+        [SearchOptimizationOutput], tool_choice="SearchOptimizationOutput"
+    )
     msg = await structured.ainvoke([system] + messages)
-    return msg.tool_calls[0]["args"]["search_query"]
+    args = msg.tool_calls[0]["args"]
+    return args["search_task"], args["rerank_query"]
 
 
 async def _optimize_for_qa(messages: list) -> str:
@@ -87,15 +105,21 @@ async def find_papers(runtime: ToolRuntime) -> Command:
     messages = runtime.state.get("messages", [])
     papers = runtime.state.get("papers", [])
 
-    search_query = await _optimize_for_search(messages)
-    logger.info(f"Finding papers for search query: {search_query[:100]}{'...' if len(search_query) > 100 else ''}")
-    logger.debug(f"Current paper count: {len(papers)}")
+    search_task, rerank_query = await _optimize_for_paper_search(messages)
+    logger.info("Finding papers — task: %s", search_task[:120])
+    logger.info("Rerank query: %s", rerank_query)
+    logger.debug("Current paper count: %d", len(papers))
 
-    state = {"optimized_query": search_query, "papers": papers, "messages": [HumanMessage(content=search_query)]}
-    result = await paper_finder_fast_graph.ainvoke(state)
+    state = {
+        "search_task": search_task,
+        "rerank_query": rerank_query,
+        "papers": papers,
+        "messages": [HumanMessage(content=search_task)],
+    }
+    result = await paper_finder.ainvoke(state)
     papers = result["papers"]
 
-    logger.info(f"Found {len(papers)} papers")
+    logger.info("Found %d papers", len(papers))
 
     return Command(
         update={"papers": result["papers"],
