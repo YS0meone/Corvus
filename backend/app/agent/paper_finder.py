@@ -11,7 +11,7 @@ from app.agent.utils import get_paper_info_text
 from rerankers import Reranker, Document
 from app.core.schema import S2Paper
 from pydantic import BaseModel, Field
-from typing import List, Tuple, Annotated, Union
+from typing import List, Tuple, Annotated
 from langchain.agents import AgentState
 from langgraph.prebuilt import tools_condition
 
@@ -93,8 +93,10 @@ async def planner(state: PaperFinderState):
             "plan_reasoning": "Using default plan due to planning error"
         }
 
-def completed_steps_formatter(completed_steps: List[Tuple[str, str]]) -> List[str]:
-    return ["\n".join([f"Task:{task}\nResult:{result}" for task, result in completed_steps])]
+def completed_steps_formatter(completed_steps: List[Tuple[str, str]]) -> str:
+    if not completed_steps:
+        return "None"
+    return "\n\n".join([f"Task: {task}\nResult: {result}" for task, result in completed_steps])
 
 async def replan_agent(state: PaperFinderState):
     system_prompt = """
@@ -138,15 +140,10 @@ async def replan_agent(state: PaperFinderState):
     {paper_info_text}
     """
 
-    class ReplanDecision(BaseModel):
-        goal_achieved: bool = Field(description="Whether the goal is achieved or not")
-        
-    class ReplanPlan(BaseModel):
-        plan_reasoning: str = Field(description="The reasoning for the new plan generated")
-        plan_steps: List[str] = Field(description="The steps of the new plan")
-    
     class Replan(BaseModel):
-        replan_reply: Union[ReplanDecision, ReplanPlan] = Field(description="The reply from the replan agent, either a decision to stop or a new plan")
+        goal_achieved: bool = Field(description="Whether the goal is achieved. If True, plan_steps is ignored.")
+        plan_steps: List[str] = Field(default_factory=list, description="The remaining steps to execute. Empty if goal is achieved.")
+        plan_reasoning: str = Field(default="", description="The reasoning for the decision.")
 
     structured_model = model.with_structured_output(Replan)
 
@@ -155,10 +152,10 @@ async def replan_agent(state: PaperFinderState):
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
         ])
-        if isinstance(response.replan_reply, ReplanDecision):
-            return {"goal_achieved": response.replan_reply.goal_achieved}
+        if response.goal_achieved:
+            return {"goal_achieved": True}
         else:
-            return {"goal_achieved": False, "plan_steps": response.replan_reply.plan_steps, "plan_reasoning": response.replan_reply.plan_reasoning}
+            return {"goal_achieved": False, "plan_steps": response.plan_steps, "plan_reasoning": response.plan_reasoning}
     except Exception as e:
         logger.error("Error in replan_agent: %s", e)
         # Fallback to existing plan
@@ -207,8 +204,8 @@ async def search_agent_node(state: SearchAgentState):
     Current papers in your list:
     {paper_info_text}
 
-    Reflect on past actions and completed steps to decide what to do next.
-    If you have sufficient results, stop and provide a concise summary of what you found.
+    Review the tool calls you have already made in this session to avoid redundant searches.
+    Once the current goal is complete, stop and provide a concise summary of what you found.
     """
 
     response = await search_agent_model.ainvoke([
@@ -252,7 +249,7 @@ search_graph.add_conditional_edges("search_agent", tools_condition, {
 search_graph.add_edge("search_tool", "search_agent")
 search_graph = search_graph.compile()
 
-async def search_agent(state: PaperFinderState):
+async def executor(state: PaperFinderState):
     iter = state.get("iter", 0)
 
     current_goal = state.get("plan_steps", [])[0]
@@ -292,16 +289,16 @@ async def search_agent(state: PaperFinderState):
 def should_reply(state: PaperFinderState):
     goal_achieved = state.get("goal_achieved", False)
     iter = state.get("iter", 0)
-    return END if goal_achieved or iter >= MAX_ITER else "search_agent"
+    return END if goal_achieved or iter >= MAX_ITER else "executor"
 
 paper_finder_builder = StateGraph(PaperFinderState)
 paper_finder_builder.add_node("planner", planner)
 paper_finder_builder.add_node("replan_agent", replan_agent)
-paper_finder_builder.add_node("search_agent", search_agent)
+paper_finder_builder.add_node("executor", executor)
 
 paper_finder_builder.add_edge(START, "planner")
-paper_finder_builder.add_edge("planner", "search_agent")
-paper_finder_builder.add_edge("search_agent", "replan_agent")
+paper_finder_builder.add_edge("planner", "executor")
+paper_finder_builder.add_edge("executor", "replan_agent")
 paper_finder_builder.add_conditional_edges("replan_agent", should_reply)
 
 paper_finder = paper_finder_builder.compile()
