@@ -63,7 +63,7 @@ async def planner(state: PaperFinderState):
     - Try to minimize the steps of plan as much as possible
     """
 
-    paper_info_text = get_paper_info_text(state.get("papers", []))
+    paper_info_text = get_paper_info_text(state.get("papers", []), include_abstract=False)
 
     user_prompt = f"""
     Task: {state['search_task']}
@@ -128,7 +128,7 @@ async def replan_agent(state: PaperFinderState):
     - If the goal is already achieved, mark it as done rather than adding more steps
     """
 
-    paper_info_text = get_paper_info_text(state.get("papers", []))
+    paper_info_text = get_paper_info_text(state.get("papers", []), include_abstract=False)
 
     user_prompt = f"""
     Task: {state['search_task']}
@@ -181,7 +181,7 @@ class SearchAgentState(AgentState):
     plan_steps: List[str]
 
 async def search_agent_node(state: SearchAgentState):
-    paper_info_text = get_paper_info_text(state.get("papers", []))
+    paper_info_text = get_paper_info_text(state.get("papers", []), include_abstract=False)
     search_query_prompt = f"""
     You are a senior research assistant who helps finding academic papers based on a user query.
     You are provided with a plan for your search from your mentor.
