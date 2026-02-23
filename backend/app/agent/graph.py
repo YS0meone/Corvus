@@ -60,7 +60,10 @@ async def _optimize_for_paper_search(messages: list) -> tuple[str, str]:
         "Given the conversation history, produce two outputs: "
         "(1) a natural-language task description so a research planner knows exactly what to do, "
         "and (2) a keyword query for semantic reranking of candidate papers. "
-        "Resolve all references (e.g. 'that paper', 'it', 'their method') using context from earlier messages."
+        "Resolve all references (e.g. 'that paper', 'it', 'their method') using context from earlier messages. "
+        "For the search_task: faithfully reflect only what the user asked for. "
+        "Do NOT add sub-topics, concepts, or angles the user did not mention — "
+        "the planner will over-engineer the search plan if given extra scope."
     ))
     structured = supervisor_model.bind_tools(
         [SearchOptimizationOutput], tool_choice="SearchOptimizationOutput"
