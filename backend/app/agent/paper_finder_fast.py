@@ -74,7 +74,7 @@ async def search_agent_node(state: SearchAgentState):
        Use these when you've found good papers and want to explore their citation network.
 
     Strategy tips:
-    - If the user query is about a specific paper, use the academic database search with the title/author filters to find the paper and quickly finish the task.
+    - If the user query is about a specific paper, use the academic database search with the title/author filters to find the paper and quickly finish the task. Never use citation chase (snowball) here unless specifically asked for.
     - If the user query is more general, you should follow the following strategy:
         - Start with web search if topic is unfamiliar to get context
         - Use academic database for targeted searches with filters
