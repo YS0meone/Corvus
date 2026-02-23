@@ -25,11 +25,24 @@ def get_user_query(messages: list) -> str:
             user_msg = m["content"]
     return user_msg 
     
-def get_paper_info_text(papers: list[S2Paper]) -> str:
+def get_paper_info_text(papers: list[S2Paper], include_abstract: bool = True) -> str:
     """Get the text of the papers."""
     if not papers:
         return "No papers found yet"
-    return "\n".join([f"Paper {paper.paperId}: {paper.title}\nAuthors: {paper.authors}\nPublication Date: {paper.publicationDate}\nAbstract: {paper.abstract}\n" for paper in papers])
+    lines = []
+    for paper in papers:
+        author_list = paper.authors or []
+        names = [a.get("name", "") for a in author_list[:3] if isinstance(a, dict) and a.get("name")]
+        authors_str = ", ".join(names) + (" et al." if len(author_list) > 3 else "")
+        parts = [
+            f"- {paper.title or 'Untitled'}",
+            f"  Authors: {authors_str or 'Unknown'}",
+            f"  Published: {paper.publicationDate or 'N/A'}",
+        ]
+        if include_abstract and paper.abstract:
+            parts.append(f"  Abstract: {paper.abstract}")
+        lines.append("\n".join(parts))
+    return "\n\n".join(lines)
 
 def get_paper_abstract(papers: List[S2Paper], selected_paper_ids: List[str]) -> Dict[str, str]:
     abstracts = {}
