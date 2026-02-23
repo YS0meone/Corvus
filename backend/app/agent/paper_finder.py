@@ -29,7 +29,6 @@ else:
         ranker = None
 
 tools = [tavily_research_overview, s2_search_papers, forward_snowball, backward_snowball]
-tool_node = ToolNode(tools)
 
 MAX_ITER = 3
 MAX_PAPER_LIST_LENGTH = 35
@@ -242,7 +241,7 @@ async def rerank_papers(papers: List[S2Paper], query: str) -> List[S2Paper]:
         logger.error("Reranking failed: %s", e)
         return papers[:MAX_PAPER_LIST_LENGTH]
 
-search_graph = StateGraph(SearchAgentState)
+search_graph = StateGraph[SearchAgentState, None, SearchAgentState, SearchAgentState](SearchAgentState)
 search_graph.add_node("search_agent", search_agent_node)
 search_graph.add_node("search_tool", search_tool_node)
 search_graph.add_edge(START, "search_agent")
@@ -290,16 +289,6 @@ async def search_agent(state: PaperFinderState):
     return {"papers": papers, "completed_steps": [step_summary], "iter": iter + 1}
 
 
-def should_clarify(state: PaperFinderState):
-    is_clear = state.get("is_clear", True)
-    route = "optimize" if is_clear else "end"
-    logger.debug("should_clarify: is_clear=%s, routing to '%s'", is_clear, route)
-    return route
-
-def should_continue(state: PaperFinderState):
-    last = state["messages"][-1]
-    return "tools" if hasattr(last, "tool_calls") and last.tool_calls else "end"
-
 def should_reply(state: PaperFinderState):
     goal_achieved = state.get("goal_achieved", False)
     iter = state.get("iter", 0)
@@ -309,7 +298,6 @@ paper_finder_builder = StateGraph(PaperFinderState)
 paper_finder_builder.add_node("planner", planner)
 paper_finder_builder.add_node("replan_agent", replan_agent)
 paper_finder_builder.add_node("search_agent", search_agent)
-paper_finder_builder.add_node("tools", tool_node)
 
 paper_finder_builder.add_edge(START, "planner")
 paper_finder_builder.add_edge("planner", "search_agent")
