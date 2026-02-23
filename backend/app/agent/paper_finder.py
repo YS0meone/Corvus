@@ -55,13 +55,12 @@ async def planner(state: PaperFinderState):
         Examples:
         - General topic: Start with web search for context, then academic database search
         - Specific paper: Use academic database with title/author filters
-        - Foundational work: Find key papers, then use forward snowball to trace their references
-        - Recent advances: Find seminal papers, then use backward snowball for recent citations
-    - Citation chasing is powerful when you've identified good seed papers
+    - Never use citation chasing (snowball) when the user is only asking for a specific paper. e.g. Find me the Attention is all you need paper. Unless the user specifically asked for it
+    e.g. Find me the Attention is all you need paper and the papers citing it.
+    - Using citation chasing when you find a good seed paper is recommended when search for a general topic.
     - The granularity of each step should be adequate for the assistant to finish within one execution
     - Keep each step concise and to the point
-    
-    Limit the number of steps to 3 or less.
+    - Try to minimize the steps of plan as much as possible
     """
 
     paper_info_text = get_paper_info_text(state.get("papers", []))
@@ -117,14 +116,16 @@ async def replan_agent(state: PaperFinderState):
         Examples:
         - General topic: Web search for context, then academic database
         - Specific paper: Use academic database with filters
-        - If good papers found: Consider citation chasing to expand the paper set
+    - Never use citation chasing (snowball) when the user is only asking for a specific paper. e.g. Find me the Attention is all you need paper. Unless the user specifically asked for it
+    e.g. Find me the Attention is all you need paper and the papers citing it.
+    - Using citation chasing when you find a good seed paper is recommended when search for a general topic.
     - The granularity of each step should be adequate for the assistant to finish within one execution
     - Take into account the steps that your assistant has already completed and the results of those steps
     - If you think the current plan is good enough, simply remove completed steps and keep the rest
     - The completed steps should not be included in the new plan
     - Keep each step concise and to the point
-    
-    Limit the number of new steps to 2 or less.
+    - Try to minimize the steps as much as possible
+    - If the goal is already achieved, mark it as done rather than adding more steps
     """
 
     paper_info_text = get_paper_info_text(state.get("papers", []))
