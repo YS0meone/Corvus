@@ -50,13 +50,14 @@ async def planner(state: PaperFinderState):
        - Backward snowball: Find papers that cite seed papers (recent work building on them)
 
     Guidelines:
+    - Every step must be a concrete search action (web search, database search, or citation chasing).
+      Do NOT include steps like "review results", "filter papers", "select seed papers", or "compare papers" —
+      result filtering and ranking is handled automatically after each step.
     - Think like a real researcher who would give different plans based on different scenarios:
         Examples:
         - General topic: Start with web search for context, then academic database search
         - Specific paper: Use academic database with title/author filters
-    - Never use citation chasing (snowball) when the user is only asking for a specific paper. e.g. Find me the Attention is all you need paper. Unless the user specifically asked for it
-    e.g. Find me the Attention is all you need paper and the papers citing it.
-    - Using citation chasing when you find a good seed paper is recommended when search for a general topic.
+    - Never use citation chasing (snowball) unless the user explicitly asks for related/citing/cited papers.
     - The granularity of each step should be adequate for the assistant to finish within one execution
     - Keep each step concise and to the point
     - Try to minimize the steps of plan as much as possible
@@ -88,7 +89,6 @@ async def planner(state: PaperFinderState):
             "plan_steps": [
                 "Use web search to understand the research topic",
                 "Search academic database for relevant papers",
-                "Review and refine search results"
             ],
             "plan_reasoning": "Using default plan due to planning error"
         }
@@ -113,13 +113,14 @@ async def replan_agent(state: PaperFinderState):
        - Backward snowball: Find papers that cite seed papers (recent work)
 
     Guidelines:
+    - Every step must be a concrete search action (web search, database search, or citation chasing).
+      Do NOT include steps like "review results", "filter papers", "select seed papers", or "compare papers" —
+      result filtering and ranking is handled automatically after each step.
     - Think like a real researcher who would give different plans based on different scenarios:
         Examples:
         - General topic: Web search for context, then academic database
         - Specific paper: Use academic database with filters
-    - Never use citation chasing (snowball) when the user is only asking for a specific paper. e.g. Find me the Attention is all you need paper. Unless the user specifically asked for it
-    e.g. Find me the Attention is all you need paper and the papers citing it.
-    - Using citation chasing when you find a good seed paper is recommended when search for a general topic.
+    - Never use citation chasing (snowball) unless the user explicitly asks for related/citing/cited papers.
     - The granularity of each step should be adequate for the assistant to finish within one execution
     - Take into account the steps that your assistant has already completed and the results of those steps
     - If you think the current plan is good enough, simply remove completed steps and keep the rest
@@ -185,21 +186,21 @@ async def search_agent_node(state: SearchAgentState):
     Your goal is to utilize the provided tools to finish the current step of the plan.
 
     You have access to multiple search methods:
-    1. General web search (tavily_research_overview): Use this when the research topic is general or unfamiliar.
-       This helps you understand the research landscape and identify famous/seminal papers you shouldn't miss.
+    1. General web search (tavily_research_overview): Use when your goal is related to using general web search to indentify famous papers or understand context etc.
 
     2. Academic database search (s2_search_papers): Search Semantic Scholar's database of 200M+ papers.
-       Use keyword queries, filters by year, venue, citation count, etc. to find relevant papers.
+       Use keyword queries, filters by year, venue, citation count, etc. to find relevant papers. Pick this tool when the goal prompts you to search academic database.
 
     3. Citation chasing tools:
        - forward_snowball: Find papers that your seed papers CITE (their references/foundations)
        - backward_snowball: Find papers that CITE your seed papers (recent work building on them)
-       Use these when you've found good papers and want to explore their citation network.
+       Use these when the goal explictly asks you to. 
 
-    Strategy tips:
-    - Start with web search if topic is unfamiliar to get context
-    - Use academic database for targeted searches with filters
-    - Use citation chasing to expand from good seed papers you've found
+    Strict limits — you are executing ONE step of a larger plan:
+    - Make as few tool call as possible. Stop as soon as the goal is met.
+    - Do NOT use citation chasing (snowball) unless the current goal explicitly asks for it.
+    - Do NOT repeat a search with minor keyword variations — pick the best query and move on.
+    - Do NOT pre-emptively do work that belongs to a later step.
 
     Current papers in your list:
     {paper_info_text}
