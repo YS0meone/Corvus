@@ -54,8 +54,8 @@ async def planner(state: PaperFinderState):
     1. General web search: Understand context and find famous/seminal papers
     2. Academic database search: Find papers with keyword queries and filters (year, venue, citations, etc.)
     3. Citation chasing:
-       - Forward snowball: Find papers that seed papers cite (their foundations/references)
-       - Backward snowball: Find papers that cite seed papers (recent work building on them)
+       - Forward snowball: Find papers that CITE seed papers (recent work building on them)
+       - Backward snowball: Find papers that seed papers CITE (their foundations/references)
 
     Guidelines:
     - Every step must be a concrete search action (web search, database search, or citation chasing).
@@ -135,8 +135,8 @@ async def replan_agent(state: PaperFinderState):
     1. General web search: Understand context and find famous/seminal papers
     2. Academic database search: Find papers with keyword queries and filters
     3. Citation chasing:
-       - Forward snowball: Find papers that seed papers cite (foundations/references)
-       - Backward snowball: Find papers that cite seed papers (recent work)
+       - Forward snowball: Find papers that CITE seed papers (recent work)
+       - Backward snowball: Find papers that seed papers CITE (foundations/references)
 
     Guidelines:
     - Every step must be a concrete search action (web search, database search, or citation chasing).
@@ -234,8 +234,8 @@ async def search_agent_node(state: SearchAgentState):
        Use keyword queries, filters by year, venue, citation count, etc. to find relevant papers. Pick this tool when the goal prompts you to search academic database.
 
     3. Citation chasing tools:
-       - forward_snowball: Find papers that your seed papers CITE (their references/foundations)
-       - backward_snowball: Find papers that CITE your seed papers (recent work building on them)
+       - forward_snowball: Find papers that CITE your seed papers (recent work building on them)
+       - backward_snowball: Find papers that your seed papers CITE (their foundations/references)
        Use these when the goal explictly asks you to. 
 
     Strict limits — you are executing ONE step of a larger plan:

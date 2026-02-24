@@ -347,18 +347,18 @@ def get_paper_details(
     return paper_info_text
 
 
-class ForwardSnowballRequest(BaseModel):
-    """Request schema for forward snowball search."""
+class BackwardSnowballRequest(BaseModel):
+    """Request schema for backward snowball search."""
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    
+
     runtime: ToolRuntime
     reasoning: str = Field(
-        ..., 
-        description="Explain why you want to find papers that these seed papers cite/reference"
+        ...,
+        description="Explain why you want to trace back the foundational papers that these seed papers cite"
     )
     seed_paper_ids: List[str] = Field(
         ...,
-        description="List of Semantic Scholar paper IDs to use as seed papers. These are the papers whose references you want to explore."
+        description="List of Semantic Scholar paper IDs to use as seed papers. These are the papers whose references (bibliography) you want to explore."
     )
     top_k: int = Field(
         10,
@@ -366,36 +366,36 @@ class ForwardSnowballRequest(BaseModel):
     )
 
 
-@tool(args_schema=ForwardSnowballRequest)
-async def forward_snowball(
+@tool(args_schema=BackwardSnowballRequest)
+async def backward_snowball(
     runtime: ToolRuntime,
     reasoning: str,
     seed_paper_ids: List[str],
     top_k: int = 10
 ):
     """
-    Forward Snowball: Find papers that the specified seed papers CITE (their references).
-    
+    Backward Snowball: Trace foundational papers by following what seed papers CITE (their references/bibliography).
+
     **What this does:**
     - Takes a list of paper IDs as seed papers
     - Fetches all papers that these seed papers reference/cite
     - Scores candidates based on citation count and how many seeds cite them
     - Returns the top-k most relevant referenced papers
-    
+
     **When to use:**
     - You want to explore the foundational papers that influenced specific papers
     - You're tracing back to the original/parent works
     - You want to understand what prior work specific papers build upon
-    
+
     **Example:**
-    For papers about "GPT-3" and "BERT", this will find papers like 
+    For papers about "GPT-3" and "BERT", this will find papers like
     "Attention is All You Need" (Transformer paper) that they cite.
-    
+
     Args:
         reasoning: Why you want to find referenced papers
         seed_paper_ids: List of Semantic Scholar paper IDs (e.g., ["paperId1", "paperId2"])
         top_k: Number of top papers to return (default: 10, max: 50)
-        
+
     Returns:
         Top-k most relevant papers cited by the seed papers
     """
@@ -500,24 +500,24 @@ async def forward_snowball(
     except Exception as e:
         return Command(
             update={"messages": [ToolMessage(
-                content=f"Error during forward snowball: {str(e)}",
+                content=f"Error during backward snowball: {str(e)}",
                 tool_call_id=tool_call_id
             )]}
         )
 
 
-class BackwardSnowballRequest(BaseModel):
-    """Request schema for backward snowball search."""
+class ForwardSnowballRequest(BaseModel):
+    """Request schema for forward snowball search."""
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    
+
     runtime: ToolRuntime
     reasoning: str = Field(
-        ..., 
-        description="Explain why you want to find papers that cite these seed papers"
+        ...,
+        description="Explain why you want to find newer papers that cite these seed papers"
     )
     seed_paper_ids: List[str] = Field(
         ...,
-        description="List of Semantic Scholar paper IDs to use as seed papers. These are the papers whose citations you want to explore."
+        description="List of Semantic Scholar paper IDs to use as seed papers. These are the papers whose citations (papers that cite them) you want to explore."
     )
     top_k: int = Field(
         10,
@@ -525,36 +525,36 @@ class BackwardSnowballRequest(BaseModel):
     )
 
 
-@tool(args_schema=BackwardSnowballRequest)
-async def backward_snowball(
+@tool(args_schema=ForwardSnowballRequest)
+async def forward_snowball(
     runtime: ToolRuntime,
     reasoning: str,
     seed_paper_ids: List[str],
     top_k: int = 10
 ):
     """
-    Backward Snowball: Find papers that CITE the specified seed papers.
-    
+    Forward Snowball: Find newer work by following who CITES the seed papers.
+
     **What this does:**
     - Takes a list of paper IDs as seed papers
     - Fetches all papers that cite these seed papers
     - Scores candidates based on citation count, recency, and how many seeds they cite
     - Returns the top-k most relevant citing papers
-    
+
     **When to use:**
     - You want to find recent work building on specific foundational papers
     - You're looking for "child" papers that extend or apply seed papers
     - You want to discover how specific papers have been used or cited
-    
+
     **Example:**
-    For the "Attention is All You Need" paper, this will find papers like 
+    For the "Attention is All You Need" paper, this will find papers like
     "BERT", "GPT-3", and other transformer-based models that cite it.
-    
+
     Args:
         reasoning: Why you want to find citing papers
         seed_paper_ids: List of Semantic Scholar paper IDs (e.g., ["paperId1", "paperId2"])
         top_k: Number of top papers to return (default: 10, max: 50)
-        
+
     Returns:
         Top-k most relevant papers that cite the seed papers
     """
@@ -661,11 +661,11 @@ async def backward_snowball(
                 )]
             }
         )
-        
+
     except Exception as e:
         return Command(
             update={"messages": [ToolMessage(
-                content=f"Error during backward snowball: {str(e)}",
+                content=f"Error during forward snowball: {str(e)}",
                 tool_call_id=tool_call_id
             )]}
         )
