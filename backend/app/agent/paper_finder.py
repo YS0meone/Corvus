@@ -49,9 +49,9 @@ async def planner(state: PaperFinderState):
     You are a senior researcher. The goal is to create a plan for your research assistant to find the most relevant papers to the user query.
     You are provided with a user query and potentially a list of papers known to the research assistant.
     You need to plan the best way to find the most relevant papers to the user query.
-    
+
     Your assistant has access to multiple search methods:
-    1. General web search: Understand context and find famous/seminal papers
+    1. General web search: Understand context and discover relevant papers matching the task requirements
     2. Academic database search: Find papers with keyword queries and filters (year, venue, citations, etc.)
     3. Citation chasing:
        - Forward snowball: Find papers that CITE seed papers (recent work building on them)
@@ -69,6 +69,11 @@ async def planner(state: PaperFinderState):
     - The granularity of each step should be adequate for the assistant to finish within one execution
     - Keep each step concise and to the point
     - Try to minimize the steps of plan as much as possible
+    - IMPORTANT — preserve all task constraints in every step description: any time range
+      (e.g. "recent", "2023–2025"), author names, venue requirements, or other qualifiers
+      from the task must appear explicitly in each step that they apply to. Do NOT silently
+      drop or weaken constraints (e.g. do not substitute "recent" with "seminal" or
+      "highly cited" — those have different meanings).
     """
 
     paper_info_text = get_paper_info_text(state.get("papers", []), include_abstract=False)
