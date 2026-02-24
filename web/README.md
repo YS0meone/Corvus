@@ -1,6 +1,6 @@
-# AI Researcher Frontend
+# Corvus — Frontend
 
-A React 19 chat interface for the AI Researcher project. Built with Vite, TypeScript, and Tailwind CSS, with real-time streaming from a LangGraph backend.
+A React 19 chat interface for Corvus. Built with Vite, TypeScript, and Tailwind CSS, with real-time streaming from a LangGraph backend.
 
 ## Prerequisites
 

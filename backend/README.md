@@ -1,4 +1,4 @@
-# AI Researcher Backend
+# Corvus — Backend
 
 A LangGraph-powered research assistant with two modes: **paper finding** (Semantic Scholar + Tavily + Cohere reranking) and **Q&A** (evidence retrieval from ingested papers via Qdrant).
 
