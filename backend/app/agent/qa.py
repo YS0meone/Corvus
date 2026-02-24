@@ -1,8 +1,10 @@
+import uuid
 from langchain.chat_models import init_chat_model
 from langchain.messages import SystemMessage, HumanMessage, AIMessage
 from langgraph.prebuilt import ToolNode
+from langgraph.graph.ui import push_ui_message
 from pydantic import BaseModel, Field
-from app.core.config import settings         
+from app.core.config import settings
 from app.tools.search import retrieve_evidence_from_selected_papers
 from app.agent.utils import get_paper_abstract
 import logging
@@ -25,13 +27,20 @@ qa_eval_model = init_chat_model(model=settings.QA_EVALUATION_MODEL_NAME)
 
 
 async def qa_retrieve(state: QAAgentState) -> QAAgentState:
+    iteration = state.get("qa_iteration", 0)
+    tracking_id = state.get("qa_ui_tracking_id") or str(uuid.uuid4())
+    label = "Retrieving evidence" if iteration == 0 else f"Refining retrieval (attempt {iteration + 1})"
+    push_ui_message("qa_status", {"label": label, "status": "running"}, id=tracking_id)
+
     user_query = state.get("user_query", "")
     selected_paper_ids = state.get("selected_paper_ids", [])
     papers = state.get("papers", [])
     if not selected_paper_ids:
         logger.warning("No papers selected for QA!")
+        push_ui_message("qa_status", {"label": label, "status": "completed", "description": "No papers selected"}, id=tracking_id)
         return {
             "evidences": [],
+            "qa_ui_tracking_id": tracking_id,
             "messages": [AIMessage(content="No papers have been selected for Q&A. Please select papers first or use the paper finding mode.")]
         }
 
@@ -58,9 +67,13 @@ async def qa_retrieve(state: QAAgentState) -> QAAgentState:
     ])
     return {
         "messages": [tool_response],
+        "qa_ui_tracking_id": tracking_id,
     }
 
 async def qa_evaluate(state: QAAgentState) -> QAAgentState:
+    tracking_id = state.get("qa_ui_tracking_id", "")
+    push_ui_message("qa_status", {"label": "Evaluating evidence", "status": "running"}, id=tracking_id)
+
     user_query = state.get("user_query", "")
     abstracts = get_paper_abstract(state.get("papers", []), state.get("selected_paper_ids", []))
     abstracts_text = "\n".join([
@@ -95,6 +108,7 @@ async def qa_evaluate(state: QAAgentState) -> QAAgentState:
     ])
 
     if decision_response is None or decision_response.decision is None:
+        push_ui_message("qa_status", {"label": "Evaluating evidence", "status": "completed", "description": "Proceeding to answer"}, id=tracking_id)
         return {
             "messages": [AIMessage(content="Evaluation failed, proceeding to answer.")],
             "limitation": "Structured output parsing failed.",
@@ -103,6 +117,7 @@ async def qa_evaluate(state: QAAgentState) -> QAAgentState:
         }
 
     if isinstance(decision_response.decision, AskForMoreEvidence):
+        push_ui_message("qa_status", {"label": "Evaluating evidence", "status": "completed", "description": "Refining retrieval…"}, id=tracking_id)
         return {
             "messages": [AIMessage(content=decision_response.decision.limitation)],
             "limitation": decision_response.decision.limitation,
@@ -110,12 +125,14 @@ async def qa_evaluate(state: QAAgentState) -> QAAgentState:
             "qa_iteration": state.get("qa_iteration", 0) + 1
         }
     elif isinstance(decision_response.decision, AnswerQuestion):
+        push_ui_message("qa_status", {"label": "Evaluating evidence", "status": "completed", "description": "Evidence sufficient"}, id=tracking_id)
         return {
             "messages": [AIMessage(content=decision_response.decision.reasoning)],
             "sufficient_evidence": True,
             "qa_iteration": state.get("qa_iteration", 0) + 1
         }
     else:
+        push_ui_message("qa_status", {"label": "Evaluating evidence", "status": "completed", "description": "Proceeding to answer"}, id=tracking_id)
         return {
             "messages": [AIMessage(content="Invalid decision")],
             "limitation": "Invalid decision",
@@ -128,6 +145,9 @@ async def qa_answer(state: QAAgentState) -> QAAgentState:
     Generate a final answer based on retrieved segments and reasoning.
     Combines all evidence and provides a concise yet complete response.
     """
+    tracking_id = state.get("qa_ui_tracking_id", "")
+    push_ui_message("qa_status", {"label": "Generating answer", "status": "running"}, id=tracking_id)
+
     user_query = state.get("user_query", "")
     
     # Get all accumulated evidence
@@ -154,6 +174,12 @@ async def qa_answer(state: QAAgentState) -> QAAgentState:
         HumanMessage(content=answer_prompt)
     ])
     
+    n = len(evidences)
+    push_ui_message("qa_status", {
+        "label": "Answer complete",
+        "status": "completed",
+        "description": f"Based on {n} evidence segment{'s' if n != 1 else ''}",
+    }, id=tracking_id)
     return {
         "messages": [AIMessage(content=response.content)],
         "final_answer": response.content

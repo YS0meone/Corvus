@@ -97,24 +97,38 @@ export const StepTracker = ({ steps }: StepTrackerProps) => {
 };
 
 // ============================================
-// PaperFinderStatus Component
+// SubagentStatus Component
 // ============================================
 
-interface PaperFinderStatusProps {
+interface SubagentStatusProps {
+  title: string;
+  icon?: 'search' | 'qa';
   label: string;
   status: 'running' | 'completed';
   description?: string;
 }
 
-export const PaperFinderStatus = ({ label, status, description }: PaperFinderStatusProps) => (
+const SubagentIcons = {
+  search: (
+    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+    </svg>
+  ),
+  qa: (
+    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  ),
+};
+
+export const SubagentStatus = ({ title, icon = 'search', label, status, description }: SubagentStatusProps) => (
   <div className="w-xl max-w-3xl rounded-lg border border-gray-200 bg-white shadow-sm overflow-hidden">
     {/* Header */}
     <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200">
-      <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-      </svg>
-      <h3 className="text-base font-semibold text-gray-900">Research Agent</h3>
+      {SubagentIcons[icon]}
+      <h3 className="text-base font-semibold text-gray-900">{title}</h3>
       <span className="ml-auto text-xs font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
         subagent
       </span>
@@ -150,6 +164,14 @@ export const PaperFinderStatus = ({ label, status, description }: PaperFinderSta
       )}
     </div>
   </div>
+);
+
+export const FinderStatus = (props: Omit<SubagentStatusProps, 'title' | 'icon'>) => (
+  <SubagentStatus title="Research Agent" icon="search" {...props} />
+);
+
+export const QAStatus = (props: Omit<SubagentStatusProps, 'title' | 'icon'>) => (
+  <SubagentStatus title="Q&A Agent" icon="qa" {...props} />
 );
 
 // ============================================

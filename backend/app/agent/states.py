@@ -39,3 +39,4 @@ class QAAgentState(MessagesState):
     user_query: str
     papers: List[S2Paper]
     final_answer: str
+    qa_ui_tracking_id: Optional[str]  # stable ID for in-place UIMessage updates

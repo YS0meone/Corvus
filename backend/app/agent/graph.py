@@ -175,6 +175,13 @@ async def retrieve_and_answer_question(runtime: ToolRuntime) -> str:
         logger.warning("No papers selected for QA")
         return "No papers selected for QA. Please select papers first."
 
+    tool_caller_msg = next(
+        (m for m in reversed(messages)
+         if hasattr(m, "tool_calls") and m.tool_calls
+         and any(tc.get("id") == runtime.tool_call_id for tc in m.tool_calls)),
+        None,
+    )
+
     qa_state = {
         "messages": [HumanMessage(content=user_query)],
         "papers": papers,
@@ -182,10 +189,24 @@ async def retrieve_and_answer_question(runtime: ToolRuntime) -> str:
         "user_query": user_query,
     }
 
-    logger.debug("Invoking QA graph")
-    result = await qa_graph.ainvoke(qa_state)
+    logger.debug("Streaming QA graph")
+    final_answer = ""
+    async for event_type, event_data in qa_graph.astream(
+        qa_state, stream_mode=["values", "custom"]
+    ):
+        if event_type == "custom":
+            logger.info("Forwarding custom event from qa_graph: %s", event_data.get("name"))
+            push_ui_message(
+                event_data.get("name", "unknown"),
+                event_data.get("props", {}),
+                id=event_data.get("id"),
+                message=tool_caller_msg,
+            )
+        elif event_type == "values":
+            final_answer = event_data.get("final_answer", final_answer)
+
     logger.info("QA graph completed successfully")
-    return result["final_answer"]
+    return final_answer
 
 
 supervisor_model = init_chat_model(model=settings.SUPERVISOR_MODEL_NAME)
