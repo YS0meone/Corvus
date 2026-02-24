@@ -138,15 +138,27 @@ async def replan_agent(state: PaperFinderState):
        - Forward snowball: Find papers that CITE seed papers (recent work)
        - Backward snowball: Find papers that seed papers CITE (foundations/references)
 
+    !! CRITICAL — what counts as a retrieved paper !!
+    Papers mentioned by name in a web search summary are NOT retrieved. They are just text.
+    A paper is only retrieved when it appears in the "Papers information" list below.
+    That list is the ONLY ground truth for retrieval success.
+    Do NOT mark the goal as achieved because paper titles were mentioned in a web search step —
+    those papers still need to be fetched from the academic database.
+
     When deciding if the goal is achieved:
-    - Specific paper lookup (user asked for a named paper/author): achieved as soon as ≥1 matching paper is found.
-    - Broad topic search: achieved when ≥5 relevant papers are found AND completed steps have covered the core search approaches for the task.
-    - Err on the side of marking done — the user can always ask for more papers. Do not add steps just to be thorough.
+    - Specific paper/author lookup: achieved when ≥1 matching paper appears in the Papers list.
+      A web search that merely names the paper does NOT count.
+    - Broad topic search: achieved when ≥7 relevant papers appear in the Papers list AND
+      the completed steps have covered the core search approaches for the task.
+    - Err on the side of marking done once papers are actually in the list — the user can always ask for more.
 
     If the goal is NOT yet achieved, update the plan. Guidelines for the new plan:
     - Every step must be a concrete search action (web search, database search, or citation chasing).
       Do NOT include steps like "review results", "filter papers", "select seed papers", or "compare papers" —
       result filtering and ranking is handled automatically after each step.
+    - If a prior web search step named specific papers/authors, make the next database step explicit:
+      e.g. "Search Semantic Scholar for papers by <author> to retrieve them into the paper list."
+      This makes clear to your assistant that retrieval — not just discovery — is the goal.
     - Never use citation chasing (snowball) unless the user explicitly asks for related/citing/cited papers.
     - The completed steps should not be included in the new plan.
     - Keep each step concise and minimize the number of remaining steps.
@@ -240,8 +252,21 @@ async def search_agent_node(state: SearchAgentState):
        - backward_snowball: Find papers that your seed papers CITE (their foundations/references)
        Use these when the goal explicitly asks you to.
 
+    !! IMPORTANT — what counts as a retrieved paper !!
+    A paper only enters the paper list when it is returned by a tool call (s2_search_papers,
+    forward_snowball, or backward_snowball). Papers mentioned by name in a web search summary
+    (tavily_research_overview) are NOT in the list — they are just text. Do NOT treat paper
+    titles or names that appear in the "Completed Steps" section below as already retrieved.
+    The ONLY ground truth for what has been retrieved is the "Current papers in your list"
+    section. If that list is empty or missing papers you need, you must call a search tool.
+
+    Exit condition for database/citation search steps:
+    - You are done only when you have actually called s2_search_papers (or a snowball tool)
+      and received results for the current goal.
+    - Do NOT stop after zero or one trivial tool calls just because paper titles were mentioned
+      in a prior web search step.
+
     Strict limits — you are executing ONE step of a larger plan:
-    - Make as few tool calls as possible. Stop as soon as the goal is met.
     - Do NOT use citation chasing (snowball) unless the current goal explicitly asks for it.
     - Do NOT repeat a search with minor keyword variations — pick the best query and move on.
     - Do NOT pre-emptively do work that belongs to a later step (listed below).
@@ -249,11 +274,12 @@ async def search_agent_node(state: SearchAgentState):
     Upcoming steps you must NOT do yet:
 {remaining_steps_text}
 
-    Current papers in your list:
+    Current papers in your list (these are the ONLY papers that have been retrieved so far):
     {paper_info_text}
 
     Review the tool calls you have already made in this session to avoid redundant searches.
-    Once the current goal is complete, stop and provide a concise summary of what you found.
+    Once the current goal is complete, stop and provide a concise summary of what you found
+    and how many papers were added to the list.
     """
 
     response = await search_agent_model.ainvoke([
