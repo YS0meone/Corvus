@@ -138,22 +138,18 @@ async def replan_agent(state: PaperFinderState):
        - Forward snowball: Find papers that CITE seed papers (recent work)
        - Backward snowball: Find papers that seed papers CITE (foundations/references)
 
-    Guidelines:
+    When deciding if the goal is achieved:
+    - Specific paper lookup (user asked for a named paper/author): achieved as soon as ≥1 matching paper is found.
+    - Broad topic search: achieved when ≥5 relevant papers are found AND completed steps have covered the core search approaches for the task.
+    - Err on the side of marking done — the user can always ask for more papers. Do not add steps just to be thorough.
+
+    If the goal is NOT yet achieved, update the plan. Guidelines for the new plan:
     - Every step must be a concrete search action (web search, database search, or citation chasing).
       Do NOT include steps like "review results", "filter papers", "select seed papers", or "compare papers" —
       result filtering and ranking is handled automatically after each step.
-    - Think like a real researcher who would give different plans based on different scenarios:
-        Examples:
-        - General topic: Web search for context, then academic database
-        - Specific paper: Use academic database with filters
     - Never use citation chasing (snowball) unless the user explicitly asks for related/citing/cited papers.
-    - The granularity of each step should be adequate for the assistant to finish within one execution
-    - Take into account the steps that your assistant has already completed and the results of those steps
-    - If you think the current plan is good enough, simply remove completed steps and keep the rest
-    - The completed steps should not be included in the new plan
-    - Keep each step concise and to the point
-    - Try to minimize the steps as much as possible
-    - If the goal is already achieved, mark it as done rather than adding more steps
+    - The completed steps should not be included in the new plan.
+    - Keep each step concise and minimize the number of remaining steps.
     """
 
     paper_info_text = get_paper_info_text(state.get("papers", []), include_abstract=False)
@@ -221,14 +217,20 @@ class SearchAgentState(AgentState):
 
 async def search_agent_node(state: SearchAgentState):
     paper_info_text = get_paper_info_text(state.get("papers", []), include_abstract=False)
+    plan_steps = state.get("plan_steps", [])
+    remaining_steps = plan_steps[1:] if len(plan_steps) > 1 else []
+    remaining_steps_text = (
+        "\n".join(f"  {i+2}. {s}" for i, s in enumerate(remaining_steps))
+        if remaining_steps else "  (none — this is the last step)"
+    )
     search_query_prompt = f"""
     You are a senior research assistant who helps finding academic papers based on a user query.
-    You are provided with a plan for your search from your mentor.
+    You are executing ONE step of a multi-step search plan. Your mentor will handle subsequent steps.
 
-    Your goal is to utilize the provided tools to finish the current step of the plan.
+    Your goal is to utilize the provided tools to finish the current step only.
 
     You have access to multiple search methods:
-    1. General web search (tavily_research_overview): Use when your goal is related to using general web search to indentify famous papers or understand context etc.
+    1. General web search (tavily_research_overview): Use when your goal is related to using general web search to identify famous papers or understand context etc.
 
     2. Academic database search (s2_search_papers): Search Semantic Scholar's database of 200M+ papers.
        Use keyword queries, filters by year, venue, citation count, etc. to find relevant papers. Pick this tool when the goal prompts you to search academic database.
@@ -236,13 +238,16 @@ async def search_agent_node(state: SearchAgentState):
     3. Citation chasing tools:
        - forward_snowball: Find papers that CITE your seed papers (recent work building on them)
        - backward_snowball: Find papers that your seed papers CITE (their foundations/references)
-       Use these when the goal explictly asks you to. 
+       Use these when the goal explicitly asks you to.
 
     Strict limits — you are executing ONE step of a larger plan:
-    - Make as few tool call as possible. Stop as soon as the goal is met.
+    - Make as few tool calls as possible. Stop as soon as the goal is met.
     - Do NOT use citation chasing (snowball) unless the current goal explicitly asks for it.
     - Do NOT repeat a search with minor keyword variations — pick the best query and move on.
-    - Do NOT pre-emptively do work that belongs to a later step.
+    - Do NOT pre-emptively do work that belongs to a later step (listed below).
+
+    Upcoming steps you must NOT do yet:
+{remaining_steps_text}
 
     Current papers in your list:
     {paper_info_text}
