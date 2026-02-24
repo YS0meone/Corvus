@@ -1,75 +1,51 @@
 # AI Researcher Frontend
 
-A React-based chat interface for the AI Researcher project. Built with Vite, TypeScript, and Tailwind CSS to provide a modern conversational interface with LangGraph agents.
-
-**Two core modes:**
-1. 🔎 **Paper Finding** - Discover relevant papers on any research topic
-2. 💬 **Q&A** - Ask detailed questions about selected papers
-
-The interface seamlessly switches between modes based on your conversation context.
+A React 19 chat interface for the AI Researcher project. Built with Vite, TypeScript, and Tailwind CSS, with real-time streaming from a LangGraph backend.
 
 ## Prerequisites
 
-- Node.js 20 or higher
-- pnpm (recommended) or npm
+- Node.js 20+
+- pnpm
 
 ## Quick Start
-
-### 1. Install Dependencies
 
 ```bash
 cd web
 pnpm install
-```
-
-### 2. Start Development Server
-
-```bash
 pnpm dev
 ```
 
 The app will be available at `http://localhost:5173`.
 
-### 3. Connect to Backend
+## Environment Variables
 
-Make sure your backend is running on `http://localhost:2024`, then:
+Copy `web/.env.example` to `web/.env` and configure:
 
-1. Open the web app at `http://localhost:5173`
-2. Enter the following connection details:
-   - **Deployment URL**: `http://localhost:2024`
-   - **Assistant/Graph ID**: `agent`
-   - **LangSmith API Key**: (leave empty for local development)
-3. Click "Continue" to start chatting
+| Variable | Default | Description |
+|---|---|---|
+| `VITE_API_URL` | `http://localhost:2024` | LangGraph backend URL |
+| `VITE_ASSISTANT_ID` | `agent` | LangGraph graph / assistant ID |
+| `VITE_LANGSMITH_API_KEY` | _(empty)_ | LangSmith API key (leave blank for local dev) |
+| `VITE_CLERK_PUBLISHABLE_KEY` | _(empty)_ | Clerk publishable key (leave blank to disable auth) |
 
-### 4. Start Using the Interface
+## Connecting to the Backend
 
-**Paper Finding Mode:**
-- Ask broad research questions: "What are transformer architectures?"
-- The agent will search, rank, and synthesize results from multiple papers
-- View paper citations with metadata in the response
-
-**Q&A Mode:**
-- Select papers from search results (or provide arXiv IDs)
-- Ask specific questions: "How does the attention mechanism work?"
-- Get answers grounded in evidence with segment-level citations
+Make sure the backend is running (`uv run langgraph dev` in `backend/`), then open `http://localhost:5173`. The app reads `VITE_API_URL` and `VITE_ASSISTANT_ID` from the environment — no manual connection dialog needed.
 
 ## Available Scripts
 
-- `pnpm dev` - Start development server
-- `pnpm build` - Build for production
-- `pnpm lint` - Run linting
-- `pnpm format` - Format code
-- `pnpm preview` - Preview production build
+- `pnpm dev` — Start development server with HMR
+- `pnpm build` — Build for production
+- `pnpm preview` — Preview production build
+- `pnpm lint` — Run ESLint
+- `pnpm format` — Format with Prettier
 
 ## Features
 
-- 🤖 **Real-time chat** with multi-agent LangGraph backend
-- 💬 **Message streaming** - See AI responses as they're generated
-- 📚 **Thread management** - Conversation history and context preservation
-- 🔍 **Dual-mode interface** - Seamlessly switch between paper finding and Q&A
-- 📝 **Rich formatting** - Markdown rendering with syntax highlighting
-- 🔗 **Citation support** - Paper references with metadata display
-- 🌙 **Dark/light mode** - Theme support with system preference detection
-- 📱 **Responsive design** - Works on desktop, tablet, and mobile
-- 🎨 **Modern UI** - shadcn/ui components with Tailwind CSS
-- ⚡ **Fast & lightweight** - Vite build tool for instant HMR
+- **Real-time Research Agent status card** — live updates as the paper finder subgraph runs (planning, searching, evaluating results)
+- **Paper selection interrupt** — after the agent finds papers, select which ones to use before Q&A proceeds
+- **Ingestion progress tracking** — per-paper status as PDFs are downloaded and processed by the Celery worker
+- **Streaming AI responses** — token-by-token streaming via the LangGraph SDK
+- **Thread history sidebar** — persistent conversation threads with a loading skeleton while history fetches
+- **Rich markdown rendering** — syntax-highlighted code blocks, tables, and inline formatting
+- **Paper citations** — paper cards with metadata displayed inline in the conversation
