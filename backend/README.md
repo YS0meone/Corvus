@@ -12,7 +12,7 @@ A LangGraph-powered research assistant with two modes: **paper finding** (Semant
 ```bash
 # 1. Copy and configure environment
 cp backend/.env_example backend/.env
-# Edit backend/.env — at minimum set OPENAI_API_KEY, COHERE_API_KEY, S2_API_KEY
+# Edit backend/.env — at minimum set OPENAI_API_KEY, GEMINI_API_KEY, COHERE_API_KEY, S2_API_KEY
 
 # 2. Start all infrastructure
 # Postgres (5432), Redis (6379), Qdrant (6333), Grobid (8070)
@@ -32,24 +32,25 @@ The backend API will be available at `http://localhost:2024`.
 
 ## Environment Variables
 
-### LLM API
+### LLM APIs
 
 | Variable | Required | Description |
 |---|---|---|
-| `OPENAI_API_KEY` | Yes | OpenAI API key for all LLM calls |
+| `OPENAI_API_KEY` | Yes | OpenAI API key — used for embeddings (`text-embedding-3-small`) |
+| `GEMINI_API_KEY` | Yes | Gemini API key — used for all agent LLM calls |
 
 ### Model Names
 
 | Variable | Default | Description |
 |---|---|---|
-| `EMBEDDING_MODEL_NAME` | `sentence-transformers/allenai-specter` | Sentence-transformers embedding model |
-| `SUPERVISOR_MODEL_NAME` | `gpt-4o-mini` | Main supervisor / router |
-| `PF_AGENT_MODEL_NAME` | `gpt-4o-mini` | Paper finder planner & executor |
-| `PF_FILTER_MODEL_NAME` | `gpt-4o-mini` | Paper finder replan agent |
-| `QA_AGENT_MODEL_NAME` | `gpt-4o-mini` | Q&A answer generation |
-| `QA_EVALUATION_MODEL_NAME` | `gpt-4o-mini` | Q&A evidence evaluation |
-| `QA_EVALUATOR_MODEL_NAME` | `gpt-4o-mini` | Q&A evaluator |
-| `QA_BASELINE_MODEL_NAME` | `gpt-4o-mini` | Q&A baseline |
+| `EMBEDDING_MODEL_NAME` | `text-embedding-3-small` | OpenAI embedding model (1536-dim) |
+| `SUPERVISOR_MODEL_NAME` | `google_genai:gemini-3-flash-preview` | Main supervisor / router |
+| `PF_AGENT_MODEL_NAME` | `google_genai:gemini-3-flash-preview` | Paper finder planner & executor |
+| `PF_FILTER_MODEL_NAME` | `google_genai:gemini-3-flash-preview` | Paper finder replan agent |
+| `QA_AGENT_MODEL_NAME` | `google_genai:gemini-3-flash-preview` | Q&A answer generation |
+| `QA_EVALUATION_MODEL_NAME` | `google_genai:gemini-3-flash-preview` | Q&A evidence evaluation |
+| `QA_EVALUATOR_MODEL_NAME` | `google_genai:gemini-3-pro-preview` | Q&A evaluator (uses Pro for higher accuracy) |
+| `QA_BASELINE_MODEL_NAME` | `google_genai:gemini-3-flash-preview` | Q&A baseline |
 
 ### LangSmith Tracing (optional)
 
@@ -72,7 +73,7 @@ The backend API will be available at `http://localhost:2024`.
 |---|---|---|
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant REST endpoint |
 | `QDRANT_API_KEY` | _(empty)_ | Leave blank for local |
-| `QDRANT_VECTOR_SIZE` | `768` | Embedding dimensions |
+| `QDRANT_VECTOR_SIZE` | `1536` | Embedding dimensions |
 | `QDRANT_COLLECTION` | `papers` | Collection name |
 | `QDRANT_DISTANCE` | `COSINE` | Distance metric |
 
@@ -171,7 +172,7 @@ qa_retrieve → qa_evaluate → qa_answer
 When a user adds a paper, a Celery task:
 1. Downloads the PDF from the S2 URL.
 2. Parses it with Grobid to extract structured text.
-3. Chunks the text and embeds each chunk using `allenai-specter`.
+3. Chunks the text and embeds each chunk using `text-embedding-3-small`.
 4. Stores the vectors in Qdrant under the `papers` collection.
 
 ## Project Structure

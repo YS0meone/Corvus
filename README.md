@@ -8,7 +8,7 @@ An AI-powered research assistant that combines **multi-agent paper discovery** w
 | Layer                    | Technology                                                      |
 | ------------------------ | --------------------------------------------------------------- |
 | Agent orchestration      | LangGraph (supervisor + subgraph pattern)                       |
-| LLM inference            | OpenAI GPT-4o-mini via LangChain                                |
+| LLM inference            | Google Gemini 3 Flash (preview) via LangChain                   |
 | API server               | FastAPI                                                         |
 | Async task queue         | Celery + Redis                                                  |
 | Frontend                 | React 19 + Vite + TypeScript                                    |
@@ -18,7 +18,7 @@ An AI-powered research assistant that combines **multi-agent paper discovery** w
 | Paper search             | Semantic Scholar API (200M+ papers)                             |
 | Web search               | Tavily                                                          |
 | Reranking                | Cohere                                                          |
-| Embeddings               | `allenai-specter` (768-dim, domain-adapted for scientific text) |
+| Embeddings               | OpenAI `text-embedding-3-small` (1536-dim)                      |
 | Auth                     | Clerk (optional)                                                |
 
 
@@ -116,7 +116,7 @@ Papers are ingested asynchronously via a Celery task so the UI never blocks:
 1. **arXiv lookup** — searches arXiv by title to find a PDF URL
 2. **PDF download** — fetches the PDF to a temp file (`PDF_DOWNLOAD_DIR`)
 3. **Grobid parsing** — sends the PDF to a local Grobid container for structured full-text extraction
-4. **Chunking & embedding** — splits the extracted text into overlapping chunks and embeds each with `allenai-specter`
+4. **Chunking & embedding** — splits the extracted text into overlapping chunks and embeds each with OpenAI `text-embedding-3-small`
 5. **Qdrant upsert** — stores vectors with paper ID and section metadata for scoped retrieval
 6. **Cleanup** — the temp PDF is deleted regardless of success or failure
 
