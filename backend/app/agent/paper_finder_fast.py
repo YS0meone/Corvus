@@ -69,8 +69,8 @@ async def search_agent_node(state: SearchAgentState):
        Use keyword queries, filters by year, venue, citation count, etc. to find relevant papers.
 
     3. Citation chasing tools:
-       - forward_snowball: Find papers that your seed papers CITE (their references/foundations)
-       - backward_snowball: Find papers that CITE your seed papers (recent work building on them)
+       - forward_snowball: Find papers that CITE your seed papers (recent work building on them)
+       - backward_snowball: Find papers that your seed papers CITE (their foundations/references)
        Use these when you've found good papers and want to explore their citation network.
 
     Strategy tips:
