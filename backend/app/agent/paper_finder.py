@@ -1,5 +1,7 @@
 import asyncio
+import uuid
 import logging
+from langgraph.graph.ui import push_ui_message
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage, SystemMessage
 from langgraph.graph import START, END, StateGraph
@@ -37,6 +39,12 @@ model = init_chat_model(model=settings.PF_AGENT_MODEL_NAME)
 search_agent_model = model.bind_tools(tools)
 
 async def planner(state: PaperFinderState):
+    tracking_id = str(uuid.uuid4())
+    push_ui_message("finder_status", {
+        "label": "Planning search strategy",
+        "status": "running",
+    }, id=tracking_id)
+
     system_prompt = """
     You are a senior researcher. The goal is to create a plan for your research assistant to find the most relevant papers to the user query.
     You are provided with a user query and potentially a list of papers known to the research assistant.
@@ -82,15 +90,27 @@ async def planner(state: PaperFinderState):
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt)
         ])
-        return {"plan_steps": response.plan_steps, "plan_reasoning": response.plan_reasoning}
+        n = len(response.plan_steps)
+        push_ui_message("finder_status", {
+            "label": "Planning search strategy",
+            "status": "completed",
+            "description": f"{n} step{'s' if n != 1 else ''} planned",
+        }, id=tracking_id)
+        return {"plan_steps": response.plan_steps, "plan_reasoning": response.plan_reasoning, "ui_tracking_id": tracking_id}
     except Exception as e:
         logger.error("Error in planner: %s", e)
+        push_ui_message("finder_status", {
+            "label": "Planning search strategy",
+            "status": "completed",
+            "description": "Using default plan due to planning error",
+        }, id=tracking_id)
         return {
             "plan_steps": [
                 "Use web search to understand the research topic",
                 "Search academic database for relevant papers",
             ],
-            "plan_reasoning": "Using default plan due to planning error"
+            "plan_reasoning": "Using default plan due to planning error",
+            "ui_tracking_id": tracking_id,
         }
 
 def completed_steps_formatter(completed_steps: List[Tuple[str, str]]) -> str:
@@ -99,6 +119,12 @@ def completed_steps_formatter(completed_steps: List[Tuple[str, str]]) -> str:
     return "\n\n".join([f"Task: {task}\nResult: {result}" for task, result in completed_steps])
 
 async def replan_agent(state: PaperFinderState):
+    tracking_id = state.get("ui_tracking_id", "")
+    push_ui_message("finder_status", {
+        "label": "Evaluating results",
+        "status": "running",
+    }, id=tracking_id)
+
     system_prompt = """
     You are a senior researcher. The goal is to update a plan for your research assistant to find the most relevant papers to the user query.
     You are provided with a user query, the retrieved papers, the current plan to retrieve the papers and the steps your assistant has completed.
@@ -154,17 +180,33 @@ async def replan_agent(state: PaperFinderState):
             HumanMessage(content=user_prompt)
         ])
         if response.goal_achieved:
+            push_ui_message("finder_status", {
+                "label": "Search complete",
+                "status": "completed",
+                "description": f"Found {len(state.get('papers', []))} papers",
+            }, id=tracking_id)
             return {"goal_achieved": True}
         else:
+            n = len(response.plan_steps)
+            push_ui_message("finder_status", {
+                "label": "Evaluating results",
+                "status": "completed",
+                "description": f"{n} step{'s' if n != 1 else ''} remaining",
+            }, id=tracking_id)
             return {"goal_achieved": False, "plan_steps": response.plan_steps, "plan_reasoning": response.plan_reasoning}
     except Exception as e:
         logger.error("Error in replan_agent: %s", e)
         # Fallback to existing plan
         current_plan = state.get("plan_steps", [])
+        push_ui_message("finder_status", {
+            "label": "Evaluating results",
+            "status": "completed",
+            "description": "Continuing with adjusted plan due to replanning error",
+        }, id=tracking_id)
         return {
             "goal_achieved": False,
             "plan_steps": current_plan[1:] if len(current_plan) > 1 else ["Search for more relevant papers"],
-            "plan_reasoning": "Continuing with adjusted plan due to replanning error"
+            "plan_reasoning": "Continuing with adjusted plan due to replanning error",
         }
 
 def flexible_reducer(current: list, update: list) -> list:
@@ -252,8 +294,14 @@ search_graph = search_graph.compile()
 
 async def executor(state: PaperFinderState):
     iter = state.get("iter", 0)
-
     current_goal = state.get("plan_steps", [])[0]
+    tracking_id = state.get("ui_tracking_id", "")
+    total = iter + len(state.get("plan_steps", []))
+    push_ui_message("finder_status", {
+        "label": f"Searching (step {iter + 1} of {total})",
+        "status": "running",
+        "description": current_goal,
+    }, id=tracking_id)
 
     user_prompt = f"""
     Task: {state.get("search_task", "")}
@@ -284,6 +332,11 @@ async def executor(state: PaperFinderState):
     else:
         content = str(response["messages"][-1].content)
     step_summary = (current_goal, content)
+    push_ui_message("finder_status", {
+        "label": f"Searching (step {iter + 1} of {total})",
+        "status": "completed",
+        "description": f"{len(papers)} papers found so far",
+    }, id=tracking_id)
     return {"papers": papers, "completed_steps": [step_summary], "iter": iter + 1}
 
 

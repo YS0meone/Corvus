@@ -14,7 +14,7 @@ import { ThreadView } from "../agent-inbox";
 import { useQueryState, parseAsBoolean } from "nuqs";
 import { GenericInterruptView } from "./generic-interrupt";
 import { SelectPapersInterruptView } from "./select-papers-interrupt";
-import { PaperComponent, PaperListComponent, StepTracker } from "@/components/agent/ui";
+import { PaperComponent, PaperListComponent, StepTracker, PaperFinderStatus } from "@/components/agent/ui";
 
 function CustomComponent({
   message,
@@ -39,7 +39,8 @@ function CustomComponent({
           components={{
             paper: PaperComponent as any,
             papers: PaperListComponent as any,
-            steps: StepTracker as any
+            steps: StepTracker as any,
+            finder_status: PaperFinderStatus as any,
           }}
           meta={{ ui: customComponent }}
         />

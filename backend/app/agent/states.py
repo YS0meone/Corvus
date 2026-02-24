@@ -28,6 +28,7 @@ class PaperFinderState(MessagesState):
     papers: List[Dict[str, Any]]
     iter: int
     goal_achieved: bool
+    ui_tracking_id: Optional[str]  # stable ID for in-place UIMessage updates
 
 class QAAgentState(MessagesState):
     evidences: Annotated[List[Document], merge_evidences]
