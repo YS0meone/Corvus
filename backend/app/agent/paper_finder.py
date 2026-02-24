@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 import logging
+from datetime import date
 from langgraph.graph.ui import push_ui_message
 from langchain.chat_models import init_chat_model
 from langchain.messages import HumanMessage, SystemMessage
@@ -45,10 +46,13 @@ async def planner(state: PaperFinderState):
         "status": "running",
     }, id=tracking_id)
 
-    system_prompt = """
+    today = date.today()
+    system_prompt = f"""
     You are a senior researcher. The goal is to create a plan for your research assistant to find the most relevant papers to the user query.
     You are provided with a user query and potentially a list of papers known to the research assistant.
     You need to plan the best way to find the most relevant papers to the user query.
+
+    Today's date: {today.strftime("%B %d, %Y")} (use this when interpreting terms like "recent" or generating year ranges).
 
     Your assistant has access to multiple search methods:
     1. General web search: Understand context and discover relevant papers matching the task requirements
@@ -240,9 +244,12 @@ async def search_agent_node(state: SearchAgentState):
         "\n".join(f"  {i+2}. {s}" for i, s in enumerate(remaining_steps))
         if remaining_steps else "  (none — this is the last step)"
     )
+    today = date.today()
     search_query_prompt = f"""
     You are a senior research assistant who helps finding academic papers based on a user query.
     You are executing ONE step of a multi-step search plan. Your mentor will handle subsequent steps.
+
+    Today's date: {today.strftime("%B %d, %Y")} (use this when applying year filters or interpreting "recent").
 
     Your goal is to utilize the provided tools to finish the current step only.
 
