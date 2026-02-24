@@ -119,14 +119,40 @@ async def find_papers(runtime: ToolRuntime) -> Command:
         "papers": papers,
         "messages": [HumanMessage(content=search_task)],
     }
-    result = await paper_finder.ainvoke(state)
-    papers = result["papers"]
+    # Use the already-committed AIMessage that issued this tool call as the UI anchor.
+    # It exists in state right now, so the frontend can resolve it during streaming.
+    tool_caller_msg = next(
+        (m for m in reversed(messages)
+         if hasattr(m, "tool_calls") and m.tool_calls
+         and any(tc.get("id") == runtime.tool_call_id for tc in m.tool_calls)),
+        None,
+    )
+    logger.debug("UI anchor message id: %s", tool_caller_msg.id if tool_caller_msg else "none")
+
+    papers = []
+    async for event_type, event_data in paper_finder.astream(
+        state, stream_mode=["values", "custom"]
+    ):
+        if event_type == "custom":
+            # Re-emit into the supervisor's SSE stream, unwrapping the inner name/props
+            logger.info("Forwarding custom event from paper_finder: %s", event_data.get("name"))
+            push_ui_message(
+                event_data.get("name", "unknown"),
+                event_data.get("props", {}),
+                id=event_data.get("id"),
+                message=tool_caller_msg,
+            )
+        elif event_type == "values":
+            papers = event_data.get("papers", papers)
 
     logger.info("Found %d papers", len(papers))
 
     return Command(
-        update={"papers": result["papers"],
-        "messages": [ToolMessage(content=f"I found {len(result['papers'])} papers for your query.", tool_call_id=runtime.tool_call_id)]
+        update={
+            "papers": papers,
+            "messages": [
+                ToolMessage(content=f"I found {len(papers)} papers for your query.", tool_call_id=runtime.tool_call_id),
+            ],
         })
 
 @tool
