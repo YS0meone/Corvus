@@ -33,13 +33,19 @@ class Settings(BaseSettings):
     # Logging configuration
     LOG_LEVEL: str = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
-    # API keys — declared here so pydantic-settings reads them from the env
-    # file; model_post_init then writes them back to os.environ so that
-    # LangChain, OpenAI SDK, and other libraries that read os.environ directly
-    # pick them up regardless of how the process was started.
+    # API keys and tracing vars — declared here so pydantic-settings reads them
+    # from the env file; model_post_init then writes them back to os.environ so
+    # that LangChain, OpenAI SDK, and other libraries that read os.environ
+    # directly pick them up regardless of how the process was started.
     OPENAI_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
     TAVILY_API_KEY: str = ""
+
+    # LangSmith tracing (optional)
+    LANGCHAIN_TRACING_V2: str = ""
+    LANGCHAIN_API_KEY: str = ""
+    LANGCHAIN_PROJECT: str = ""
+    LANGCHAIN_ENDPOINT: str = ""
 
     EMBEDDING_MODEL_NAME: str
 
@@ -75,8 +81,16 @@ class Settings(BaseSettings):
     DISABLE_AUTH: bool = False
 
     def model_post_init(self, __context: Any) -> None:
-        """Push API keys into os.environ so LangChain/OpenAI SDKs can find them."""
-        for key in ("OPENAI_API_KEY", "GEMINI_API_KEY", "TAVILY_API_KEY"):
+        """Push API keys and tracing vars into os.environ so LangChain/OpenAI SDKs can find them."""
+        for key in (
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "TAVILY_API_KEY",
+            "LANGCHAIN_TRACING_V2",
+            "LANGCHAIN_API_KEY",
+            "LANGCHAIN_PROJECT",
+            "LANGCHAIN_ENDPOINT",
+        ):
             value = getattr(self, key, "")
             if value:
                 os.environ.setdefault(key, value)
