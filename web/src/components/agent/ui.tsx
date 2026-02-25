@@ -496,7 +496,7 @@ export const PaperListComponent = (props: PaperListComponentProps) => {
               <p className="text-xs text-gray-400 py-1">Preparing tasks…</p>
             )}
             {taskStatuses.map(ts => {
-              const isSuccess = ts.state === 'SUCCESS' && ts.result?.method !== 'skipped';
+              const isSuccess = ts.state === 'SUCCESS' && ts.result?.method !== 'skipped' && ts.result?.success !== false;
               const isSkipped = ts.state === 'SUCCESS' && ts.result?.method === 'skipped';
               const isFailed = ts.state === 'FAILURE' || ts.result?.success === false;
               const isActive = ts.state === 'STARTED';
@@ -523,11 +523,19 @@ export const PaperListComponent = (props: PaperListComponentProps) => {
                 : 'text-gray-400';
 
               const paper = props.papers.find(p => p.paperId === ts.paperId);
+              const errorMsg = isFailed ? (ts.result?.error ?? 'Unknown error') : null;
               return (
-                <div key={ts.taskId} className="flex items-center gap-2.5 text-xs py-0.5">
-                  {dot}
-                  <span className={`${labelColor} w-32 shrink-0`}>{label}</span>
-                  <span className="text-gray-500 truncate">{paper?.title ?? ts.paperId}</span>
+                <div key={ts.taskId} className="flex items-start gap-2.5 text-xs py-0.5">
+                  <span className="mt-0.5 shrink-0">{dot}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`${labelColor} shrink-0`}>{label}</span>
+                      <span className="text-gray-500 truncate">{paper?.title ?? ts.paperId}</span>
+                    </div>
+                    {errorMsg && (
+                      <p className="text-red-400 mt-0.5 leading-tight">{errorMsg}</p>
+                    )}
+                  </div>
                 </div>
               );
             })}
