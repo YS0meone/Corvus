@@ -83,16 +83,17 @@ async def retrieve_evidence_from_selected_papers(
     existing_evds = state.get("evidences", [])
 
     try:
-        # Initialize Qdrant service
-        qdrant_service = QdrantService(settings.qdrant_config)
-        # Perform vector search (sync client — offload to thread)
-        results = await asyncio.to_thread(
-            qdrant_service.search_selected_ids,
-            ids=ids,
-            query=query,
-            k=min(limit, 30),
-            score_threshold=score_threshold,
-        )
+        # QdrantService.__init__ makes a blocking socket call (collection_exists),
+        # so instantiation must happen inside the thread, not on the event loop.
+        def _search():
+            qdrant_service = QdrantService(settings.qdrant_config)
+            return qdrant_service.search_selected_ids(
+                ids=ids,
+                query=query,
+                k=min(limit, 30),
+                score_threshold=score_threshold,
+            )
+        results = await asyncio.to_thread(_search)
         results = remove_duplicated_evidence(existing_evds, results)
         index_to_keep = await llm_document_filter_batch(results, query, abstracts, batch_size=3)
         results = [results[i] for i in index_to_keep if 0 <= i < len(results)]
