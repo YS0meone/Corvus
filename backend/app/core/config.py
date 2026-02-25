@@ -1,4 +1,5 @@
 import os
+from typing import Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 from pydantic import BaseModel
@@ -32,6 +33,14 @@ class Settings(BaseSettings):
     # Logging configuration
     LOG_LEVEL: str = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
+    # API keys — declared here so pydantic-settings reads them from the env
+    # file; model_post_init then writes them back to os.environ so that
+    # LangChain, OpenAI SDK, and other libraries that read os.environ directly
+    # pick them up regardless of how the process was started.
+    OPENAI_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
+    TAVILY_API_KEY: str = ""
+
     EMBEDDING_MODEL_NAME: str
 
     SUPERVISOR_MODEL_NAME: str
@@ -64,7 +73,14 @@ class Settings(BaseSettings):
 
     CLERK_JWKS_URL: str = ""  # only required by the LangGraph backend, not the Celery worker
     DISABLE_AUTH: bool = False
-    
+
+    def model_post_init(self, __context: Any) -> None:
+        """Push API keys into os.environ so LangChain/OpenAI SDKs can find them."""
+        for key in ("OPENAI_API_KEY", "GEMINI_API_KEY", "TAVILY_API_KEY"):
+            value = getattr(self, key, "")
+            if value:
+                os.environ.setdefault(key, value)
+
     @property
     def qdrant_config(self) -> QdrantConfig:
         return QdrantConfig(
