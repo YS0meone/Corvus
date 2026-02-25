@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from langchain.chat_models import init_chat_model
 from langchain.messages import SystemMessage, HumanMessage, AIMessage
@@ -5,6 +6,7 @@ from langgraph.prebuilt import ToolNode
 from langgraph.graph.ui import push_ui_message
 from pydantic import BaseModel, Field
 from app.core.config import settings
+from app.services.qdrant import QdrantService
 from app.tools.search import retrieve_evidence_from_selected_papers
 from app.agent.utils import get_paper_abstract
 import logging
@@ -19,6 +21,22 @@ from app.agent.prompts import (
     QA_ANSWER_SYSTEM,
     QA_ANSWER_USER,
 )
+
+_qdrant: QdrantService | None = None
+
+def _get_qdrant() -> QdrantService:
+    global _qdrant
+    if _qdrant is None:
+        _qdrant = QdrantService(settings.qdrant_config)
+    return _qdrant
+
+async def _check_paper_exists(paper_id: str) -> bool:
+    # _get_qdrant() must be called inside the thread — its __init__ makes a
+    # blocking socket call (collection_exists). Calling it outside to_thread
+    # would evaluate it on the event loop before the executor runs.
+    def _check():
+        return _get_qdrant().check_paper_exists(paper_id)
+    return await asyncio.to_thread(_check)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +62,28 @@ async def qa_retrieve(state: QAAgentState) -> QAAgentState:
             "messages": [AIMessage(content="No papers have been selected for Q&A. Please select papers first or use the paper finding mode.")]
         }
 
+    # On first iteration, check which selected papers are actually indexed in Qdrant.
+    # Papers that failed or skipped ingestion have no vectors — we record them so the
+    # evaluator and answer nodes can handle thin evidence gracefully instead of looping.
+    state_updates: dict = {"qa_ui_tracking_id": tracking_id}
+    if iteration == 0:
+        id_to_title = {p.paperId: (p.title or p.paperId) for p in papers if p.paperId in selected_paper_ids}
+        unindexed: list[str] = []
+        for pid in selected_paper_ids:
+            if not await _check_paper_exists(pid):
+                unindexed.append(pid)
+        state_updates["unindexed_paper_ids"] = unindexed
+        if unindexed:
+            titles = ", ".join(id_to_title.get(pid, pid) for pid in unindexed)
+            logger.info(f"Unindexed papers detected: {unindexed}")
+            push_ui_message("qa_status", {
+                "label": "Partial coverage",
+                "status": "running",
+                "description": f"No full text indexed for: {titles} — answering from abstract only",
+            }, id=tracking_id)
+
+    unindexed_paper_ids = state_updates.get("unindexed_paper_ids", state.get("unindexed_paper_ids", []))
+
     abstracts = get_paper_abstract(papers=papers, selected_paper_ids=selected_paper_ids)
     evidences = state.get("evidences", [])
     evidences_text = "\n\n".join([
@@ -57,7 +97,12 @@ async def qa_retrieve(state: QAAgentState) -> QAAgentState:
         for paper_id, abstract in abstracts.items()
     ])
 
-    retrieval_prompt = QA_RETRIEVAL_USER.format(user_query=user_query, abstracts_text=abstracts_text, evidences_text=evidences_text, limitation=limitation)
+    retrieval_prompt = QA_RETRIEVAL_USER.format(
+        user_query=user_query,
+        abstracts_text=abstracts_text,
+        evidences_text=evidences_text,
+        limitation=limitation,
+    )
 
     tool_model = qa_model.bind_tools([retrieve_evidence_from_selected_papers], tool_choice="retrieve_evidence_from_selected_papers")
     tool_response = await tool_model.ainvoke([
@@ -65,10 +110,7 @@ async def qa_retrieve(state: QAAgentState) -> QAAgentState:
         *state.get("messages", []),
         HumanMessage(content=retrieval_prompt)
     ])
-    return {
-        "messages": [tool_response],
-        "qa_ui_tracking_id": tracking_id,
-    }
+    return {**state_updates, "messages": [tool_response]}
 
 async def qa_evaluate(state: QAAgentState) -> QAAgentState:
     tracking_id = state.get("qa_ui_tracking_id", "")
@@ -87,7 +129,21 @@ async def qa_evaluate(state: QAAgentState) -> QAAgentState:
     ]) if evidences else "No evidence retrieved yet."
 
     limitation = state.get("limitation", "This is the first retrieval attempt.")
-    evaluation_prompt = QA_EVALUATION_USER.format(user_query=user_query, abstracts_text=abstracts_text, evidences_text=evidences_text, limitation=limitation)
+    unindexed_paper_ids = state.get("unindexed_paper_ids", [])
+    id_to_title = {p.paperId: (p.title or p.paperId) for p in state.get("papers", []) if p.paperId in unindexed_paper_ids}
+    unindexed_text = (
+        "None — all selected papers are fully indexed."
+        if not unindexed_paper_ids
+        else "The following papers have NO full text in the database (ingestion failed or paper not on arXiv): "
+             + ", ".join(f"{id_to_title.get(pid, pid)} ({pid})" for pid in unindexed_paper_ids)
+    )
+    evaluation_prompt = QA_EVALUATION_USER.format(
+        user_query=user_query,
+        abstracts_text=abstracts_text,
+        evidences_text=evidences_text,
+        limitation=limitation,
+        unindexed_papers=unindexed_text,
+    )
 
     class AskForMoreEvidence(BaseModel):
         limitation: str = Field(
@@ -158,17 +214,29 @@ async def qa_answer(state: QAAgentState) -> QAAgentState:
     ])
     
     limitation = state.get("limitation", "No limitation")
-    
+
     # Get paper abstracts for context
-    abstracts = get_paper_abstract(state.get("papers", []), state.get("selected_paper_ids", []))
+    papers = state.get("papers", [])
+    abstracts = get_paper_abstract(papers, state.get("selected_paper_ids", []))
     abstracts_text = "\n".join([
         f"Paper {paper_id}:\n{abstract}"
         for paper_id, abstract in abstracts.items()
     ])
-    answer_prompt = QA_ANSWER_USER.format(user_query=user_query, abstracts_text=abstracts_text, evidences_text=evidences_text, limitation=limitation)
-    forced = state.get("qa_iteration", 0) >= 3 and not state.get("sufficient_evidence", False)
-    if forced:
-        answer_prompt += "\n\nNote: Maximum retrieval iterations reached. Evidence may be incomplete — acknowledge any gaps explicitly."
+    unindexed_paper_ids = state.get("unindexed_paper_ids", [])
+    id_to_title = {p.paperId: (p.title or p.paperId) for p in papers if p.paperId in unindexed_paper_ids}
+    unindexed_text = (
+        "None — all selected papers are fully indexed."
+        if not unindexed_paper_ids
+        else "The following papers have NO full text in the database — only their abstracts (shown above) were available: "
+             + ", ".join(f"{id_to_title.get(pid, pid)}" for pid in unindexed_paper_ids)
+    )
+    answer_prompt = QA_ANSWER_USER.format(
+        user_query=user_query,
+        abstracts_text=abstracts_text,
+        evidences_text=evidences_text,
+        limitation=limitation,
+        unindexed_papers=unindexed_text,
+    )
     response = await qa_model.ainvoke([
         SystemMessage(content=QA_ANSWER_SYSTEM),
         HumanMessage(content=answer_prompt)
