@@ -146,42 +146,49 @@ cd Corvus
 ### 2. Configure environment
 
 ```bash
-cp backend/.env_example backend/.env
+cp backend/.env_example backend/.env.local
 ```
 
-Edit `backend/.env` and set at minimum:
+Edit `backend/.env.local` and fill in at minimum:
 
-- `OPENAI_API_KEY`
-- `COHERE_API_KEY`
-- `S2_API_KEY`
+- `OPENAI_API_KEY` — for embeddings
+- `GEMINI_API_KEY` — for all agent LLM calls
+- `COHERE_API_KEY` — for reranking
+- `S2_API_KEY` — for Semantic Scholar search
+
+Local infrastructure variables (Qdrant, Redis, Grobid) are pre-filled with `localhost` defaults.
 
 ### 3. Start infrastructure
 
 ```bash
-docker compose up -d
+make infra
 ```
 
-Starts Postgres (5432), Redis (6379), Qdrant (6333), and Grobid (8070).
+Starts Redis (6379), Qdrant (6333), and Grobid (8070) via Docker Compose.
 
-### 4. Start the Celery worker
+### 4. Start the Celery worker, backend, and frontend
 
-```bash
-cd backend && uv run python -m celery -A app.celery_app worker --loglevel=info --pool=solo
-```
-
-### 5. Start the backend
+Open three terminals and run:
 
 ```bash
-cd backend && uv run langgraph dev
-```
-
-### 6. Start the frontend
-
-```bash
-cd web && pnpm install && pnpm dev
+make worker    # Celery worker
+make dev       # LangGraph backend  (http://localhost:2024)
+make frontend  # React frontend     (http://localhost:5173)
 ```
 
 Open `http://localhost:5173`.
+
+### Switching to cloud services
+
+To run against your deployed Qdrant, Redis, and Grobid instead:
+
+```bash
+cp backend/.env_example backend/.env.cloud
+# fill in cloud service URLs and API keys
+
+make dev-cloud
+make worker-cloud
+```
 
 ## Documentation
 
