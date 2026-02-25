@@ -1,6 +1,12 @@
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 from pydantic import BaseModel
+
+_backend_dir = Path(__file__).parent.parent.parent
+# ENV_FILE can be set to switch between configurations, e.g.:
+#   ENV_FILE=.env.cloud uv run langgraph dev
+_env_file = os.getenv("ENV_FILE", str(_backend_dir / ".env.local"))
 
 
 class QdrantConfig(BaseModel):
@@ -17,7 +23,7 @@ class CeleryConfig(BaseModel):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).parent.parent.parent / ".env",
+        env_file=_env_file,
         env_file_encoding="utf-8",
         extra="ignore",
         validate_assignment=True,
