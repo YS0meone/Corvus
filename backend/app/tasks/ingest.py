@@ -72,52 +72,52 @@ def ingest_paper_task(self, paper_dict: dict) -> dict:
             arxiv_paper = result
             break
     except Exception as e:
-        logger.warning(f"arXiv search failed for {paper.paperId}: {e}. Will fall back to abstract-only.")
-        arxiv_paper = None
-
-    has_pdf = arxiv_paper is not None
-
-    
-    if has_pdf:
-        try:
-            file_name = re.sub(r'[<>:"/\\|?*]', '_', arxiv_paper.title.replace(" ", "_"))
-            pdf_path = Path(settings.PDF_DOWNLOAD_DIR) / (file_name + ".pdf")
-            Path(settings.PDF_DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
-            arxiv_paper.download_pdf(dirpath=settings.PDF_DOWNLOAD_DIR, filename=file_name+".pdf")
-
-            try:
-                chunk_count = qdrant.add_s2_paper(file_name, paper.paperId)
-                logger.info(f"Ingested paper {paper.paperId} via PDF ({chunk_count} chunks)")
-                return {
-                    "paperId": paper.paperId,
-                    "method": "full_pdf",
-                    "chunk_count": chunk_count,
-                    "success": True,
-                }
-            finally:
-                pdf_path.unlink(missing_ok=True)
-                logger.debug(f"Deleted temp PDF {pdf_path}")
-        except Exception as e:
-            logger.warning(
-                f"PDF ingestion failed for {paper.paperId}, falling back to abstract: {e}"
-            )
-
-    # Fallback: abstract-only
-    try:
-        chunk_count = qdrant.add_s2_paper_abstract_only(paper)
-        logger.info(f"Ingested paper {paper.paperId} via abstract-only")
+        logger.warning(f"arXiv search failed for {paper.paperId}: {e}")
         return {
             "paperId": paper.paperId,
-            "method": "abstract_only",
-            "chunk_count": chunk_count,
-            "success": True,
-        }
-    except Exception as e:
-        logger.error(f"Ingestion completely failed for {paper.paperId}: {e}")
-        return {
-            "paperId": paper.paperId,
-            "method": "none",
+            "method": "failed",
             "chunk_count": 0,
             "success": False,
-            "error": str(e),
+            "error": f"arXiv search failed — {e}",
+        }
+
+    if arxiv_paper is None:
+        # Paper not found on arXiv — do not fall back to abstract-only.
+        # The abstract is already passed directly to the QA agent via paper metadata;
+        # storing it in Qdrant would pollute the vector store and block future re-ingestion.
+        logger.info(f"Paper {paper.paperId} not found on arXiv")
+        return {
+            "paperId": paper.paperId,
+            "method": "failed",
+            "chunk_count": 0,
+            "success": False,
+            "error": "Not available on arXiv — upload the PDF manually to enable Q&A",
+        }
+
+    try:
+        file_name = re.sub(r'[<>:"/\\|?*]', '_', arxiv_paper.title.replace(" ", "_"))
+        pdf_path = Path(settings.PDF_DOWNLOAD_DIR) / (file_name + ".pdf")
+        Path(settings.PDF_DOWNLOAD_DIR).mkdir(parents=True, exist_ok=True)
+        arxiv_paper.download_pdf(dirpath=settings.PDF_DOWNLOAD_DIR, filename=file_name+".pdf")
+
+        try:
+            chunk_count = qdrant.add_s2_paper(file_name, paper.paperId)
+            logger.info(f"Ingested paper {paper.paperId} via PDF ({chunk_count} chunks)")
+            return {
+                "paperId": paper.paperId,
+                "method": "full_pdf",
+                "chunk_count": chunk_count,
+                "success": True,
+            }
+        finally:
+            pdf_path.unlink(missing_ok=True)
+            logger.debug(f"Deleted temp PDF {pdf_path}")
+    except Exception as e:
+        logger.warning(f"PDF ingestion failed for {paper.paperId}: {e}")
+        return {
+            "paperId": paper.paperId,
+            "method": "failed",
+            "chunk_count": 0,
+            "success": False,
+            "error": f"PDF processing failed — {e}",
         }
