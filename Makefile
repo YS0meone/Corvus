@@ -2,7 +2,7 @@
 
 # ── Local development (localhost Qdrant, Redis, Grobid) ─────────────────────
 dev:
-	cd backend && uv run langgraph dev
+	cd backend && uv run langgraph dev --allow-blocking
 
 worker:
 	cd backend && uv run python -m celery -A app.celery_app worker --loglevel=info --pool=solo
