@@ -35,6 +35,7 @@ class QAAgentState(MessagesState):
     limitation: str
     qa_iteration: int
     selected_paper_ids: List[str]
+    unindexed_paper_ids: List[str]  # paper IDs with no vectors in Qdrant (failed/skipped ingestion)
     sufficient_evidence: bool
     user_query: str
     papers: List[S2Paper]

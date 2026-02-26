@@ -1,4 +1,5 @@
-.env
+**/.env*
+!**/.env_example
 
 # Large data files
 backend/eval/data/scidocs/corpus.jsonl
