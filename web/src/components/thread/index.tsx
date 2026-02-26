@@ -437,6 +437,7 @@ export function Thread() {
 
                     <div className="flex items-center justify-between p-2 pt-4">
                       <div>
+                        {/* Hide Tool Calls toggle — uncomment to re-enable
                         <div className="flex items-center space-x-2">
                           <Switch
                             id="render-tool-calls"
@@ -450,6 +451,7 @@ export function Thread() {
                             Hide Tool Calls
                           </Label>
                         </div>
+                        */}
                       </div>
                       {stream.isLoading ? (
                         <Button key="stop" onClick={() => stream.stop()}>
