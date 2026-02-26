@@ -30,8 +30,8 @@ import SelectedPapersPanel from "./selected-papers-panel";
 import { usePaperSelection } from "@/providers/PaperSelection";
 import { toast } from "sonner";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { Label } from "../ui/label";
-import { Switch } from "../ui/switch";
+// import { Label } from "../ui/label";
+// import { Switch } from "../ui/switch";
 import { GitHubSVG } from "../icons/github";
 import {
   Tooltip,
@@ -109,10 +109,10 @@ export function Thread() {
     "selectedPapersOpen",
     parseAsBoolean.withDefault(false),
   );
-  const [hideToolCalls, setHideToolCalls] = useQueryState(
-    "hideToolCalls",
-    parseAsBoolean.withDefault(true),
-  );
+  // const [hideToolCalls, setHideToolCalls] = useQueryState(
+  //   "hideToolCalls",
+  //   parseAsBoolean.withDefault(true),
+  // );
   const [input, setInput] = useState("");
   const [firstTokenReceived, setFirstTokenReceived] = useState(false);
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
