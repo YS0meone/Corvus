@@ -4,6 +4,8 @@ import React, {
   ReactNode,
   useState,
   useEffect,
+  useCallback,
+  useMemo,
 } from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import { type Message } from "@langchain/langgraph-sdk";
@@ -18,8 +20,8 @@ import { useThreads } from "./Thread";
 import { toast } from "sonner";
 import { useAuth } from "@clerk/clerk-react";
 
-// StreamProvider only mounts inside <SignedIn>, so clerkToken will always
-// be available once the token fetch resolves.
+// StreamProvider only mounts inside <SignedIn>, so getToken will always
+// be available.
 
 export type StateType = { messages: Message[]; ui?: UIMessage[] };
 
@@ -45,12 +47,13 @@ async function sleep(ms = 4000) {
 async function checkGraphStatus(
   apiUrl: string,
   apiKey: string | null,
-  clerkToken: string | null,
+  getToken: () => Promise<string | null>,
 ): Promise<boolean> {
   try {
     const headers: Record<string, string> = {};
     if (apiKey) headers["X-Api-Key"] = apiKey;
-    if (clerkToken) headers["Authorization"] = `Bearer ${clerkToken}`;
+    const token = await getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(`${apiUrl}/info`, { headers });
     return res.ok;
   } catch (e) {
@@ -64,26 +67,42 @@ const StreamSession = ({
   apiKey,
   apiUrl,
   assistantId,
-  clerkToken,
+  getToken,
 }: {
   children: ReactNode;
   apiKey: string | null;
   apiUrl: string;
   assistantId: string;
-  clerkToken: string | null;
+  getToken: () => Promise<string | null>;
 }) => {
   const [threadId, setThreadId] = useQueryState("threadId");
   const { getThreads, setThreads } = useThreads();
 
-  const defaultHeaders: Record<string, string> = {};
-  if (clerkToken) defaultHeaders["Authorization"] = `Bearer ${clerkToken}`;
+  // Inject a fresh Clerk JWT on every request. getToken() returns the cached
+  // token if still valid, or silently mints a new one — no polling needed.
+  const authenticatedFetch = useCallback(
+    async (url: string | URL | Request, init?: RequestInit) => {
+      const token = await getToken();
+      const headers = new Headers(init?.headers);
+      if (token) headers.set("Authorization", `Bearer ${token}`);
+      return fetch(url as string, { ...init, headers });
+    },
+    [getToken],
+  );
+
+  // Memoize so useStream's internal useMemo doesn't recreate the Client on
+  // every render (callerOptions compared by reference in its dep array).
+  const callerOptions = useMemo(
+    () => ({ fetch: authenticatedFetch }),
+    [authenticatedFetch],
+  );
 
   const streamValue = useTypedStream({
     apiUrl,
     apiKey: apiKey ?? undefined,
     assistantId,
     threadId: threadId ?? null,
-    defaultHeaders,
+    callerOptions,
     onCustomEvent: (event, options) => {
       options.mutate((prev) => {
         const ui = uiMessageReducer(prev.ui ?? [], event);
@@ -97,7 +116,7 @@ const StreamSession = ({
   });
 
   useEffect(() => {
-    checkGraphStatus(apiUrl, apiKey, clerkToken).then((ok) => {
+    checkGraphStatus(apiUrl, apiKey, getToken).then((ok) => {
       if (!ok) {
         toast.error("Failed to connect to LangGraph server", {
           description: () => (
@@ -112,7 +131,7 @@ const StreamSession = ({
         });
       }
     });
-  }, [apiKey, apiUrl, clerkToken]);
+  }, [apiKey, apiUrl, getToken]);
 
   return (
     <StreamContext.Provider value={streamValue}>
@@ -129,22 +148,6 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   children,
 }) => {
   const { getToken } = useAuth();
-  const [clerkToken, setClerkToken] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchToken = async () => {
-      // skipCache: true forces Clerk to mint a new JWT every call.
-      // Without it, getToken() returns the same cached token until expiry,
-      // so clerkToken state never changes, useStream's client is never
-      // recreated, and requests fail with 403 "Signature has expired".
-      const token = await getToken({ skipCache: true });
-      setClerkToken(token);
-    };
-    fetchToken();
-    // Tokens expire after 60 s; refresh every 45 s to stay well inside that.
-    const interval = setInterval(fetchToken, 45 * 1000);
-    return () => clearInterval(interval);
-  }, [getToken]);
 
   const envApiUrl: string | undefined = import.meta.env.VITE_API_URL;
   const envAssistantId: string | undefined = import.meta.env.VITE_ASSISTANT_ID;
@@ -165,16 +168,12 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({
   const finalApiUrl = apiUrl || envApiUrl;
   const finalAssistantId = assistantId || envAssistantId;
 
-  // Wait until the Clerk token is fetched before mounting StreamSession,
-  // so useStream's internal client is always initialized with the auth header.
-  if (!clerkToken) return null;
-
   return (
     <StreamSession
       apiKey={apiKey || null}
       apiUrl={finalApiUrl || DEFAULT_API_URL}
       assistantId={finalAssistantId || DEFAULT_ASSISTANT_ID}
-      clerkToken={clerkToken}
+      getToken={getToken}
     >
       {children}
     </StreamSession>
