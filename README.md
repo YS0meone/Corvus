@@ -1,6 +1,6 @@
 # Corvus
 
-An AI-powered research assistant that combines **multi-agent paper discovery** with **evidence-based question answering** over academic literature. Ask Corvus to find papers on any research topic, then drill into them with precise, citation-grounded answers.
+A **multi-agent AI research system** built on a supervisor architecture. A top-level supervisor routes between specialized subagents — a Paper Finding Agent for academic search and citation discovery, and a Q&A Agent for evidence-based question answering over the papers you select.
 
 
 https://github.com/user-attachments/assets/bfd8e9bc-2266-42f7-9a8e-5412029f08fc
@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/bfd8e9bc-2266-42f7-9a8e-5412029f08fc
 
 ## Agent Architecture
 
-Corvus is built around a **three-tier LangGraph agent hierarchy**: a supervisor that plans and routes, a paper finder subgraph that searches, and a Q&A subgraph that retrieves and answers.
+Corvus is built around three LangGraph agents: a **Supervisor** that plans and routes, a **Paper Finding Agent** that searches and discovers papers, and a **Q&A Agent** that retrieves evidence and answers questions.
 
 ### Supervisor (`graph.py`)
 
@@ -60,7 +60,7 @@ query_evaluation → planner → executor → supervisor_tools → post_tool
 
 ---
 
-### Paper Finder Subgraph (`paper_finder.py`)
+### Paper Finding Agent (`paper_finder.py`)
 
 Invoked by the supervisor's `find_papers` tool. Runs an iterative search loop (max 3 iterations) using a combination of search tools:
 
@@ -87,13 +87,13 @@ planner ──→ executor ──→ replan_agent
 
 After the search agent finishes its step, all accumulated papers are **reranked with Cohere** against a keyword-optimised query derived from the original task. Only the top-35 most relevant papers are kept, preventing the list from growing unboundedly across iterations.
 
-`**replan_agent*`* — Evaluates whether the goal is achieved by inspecting the *actual paper list* (not just what appeared in web search summaries). If the goal is not yet met, it rewrites the remaining plan steps with explicit retrieval targets, then loops back to the executor.
+`**replan_agent**` — Evaluates whether the goal is achieved by inspecting the *actual paper list* (not just what appeared in web search summaries). If the goal is not yet met, it rewrites the remaining plan steps with explicit retrieval targets, then loops back to the executor.
 
 All three nodes emit `finder_status` custom events that the frontend renders as a real-time **Research Agent** status card.
 
 ---
 
-### Q&A Subgraph (`qa.py`)
+### Q&A Agent (`qa.py`)
 
 Invoked after paper selection. Performs iterative evidence retrieval scoped to the user-selected paper IDs (max 3 iterations):
 
