@@ -2,6 +2,10 @@
 
 An AI-powered research assistant that combines **multi-agent paper discovery** with **evidence-based question answering** over academic literature. Ask Corvus to find papers on any research topic, then drill into them with precise, citation-grounded answers.
 
+
+https://github.com/user-attachments/assets/bfd8e9bc-2266-42f7-9a8e-5412029f08fc
+
+
 **[Live demo → corvus-agent.vercel.app](https://corvus-agent.vercel.app)** | **[MCP server](./mcp/)** — use Corvus's search tools directly in Claude Desktop
 
 ## Stack
