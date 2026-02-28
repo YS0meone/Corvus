@@ -62,7 +62,7 @@ query_evaluation → planner → executor → supervisor_tools → post_tool
 
 ### Paper Finder Subgraph (`paper_finder.py`)
 
-Invoked by the supervisor's `find_papers` tool. Runs an iterative search loop (max 3 iterations) to retrieve papers from Semantic Scholar:
+Invoked by the supervisor's `find_papers` tool. Runs an iterative search loop (max 3 iterations) using a combination of search tools:
 
 ```
 planner ──→ executor ──→ replan_agent
@@ -105,11 +105,11 @@ qa_retrieve ──→ tools ──→ qa_evaluate ──→ qa_answer
                           qa_retrieve …
 ```
 
-`**qa_retrieve**` — Generates focused retrieval queries from the user question and calls `retrieve_evidence_from_selected_papers`, which performs vector search over the Qdrant collection filtered to the selected paper IDs only. This scoping ensures answers are grounded exclusively in the papers the user chose.
+`**qa_retrieve**` — On the first iteration, checks Qdrant for each selected paper and records which ones have no indexed full text (e.g. ingestion failed or paper not on arXiv). These `unindexed_paper_ids` are carried in state so downstream nodes can handle thin evidence gracefully. Then generates focused retrieval queries and calls `retrieve_evidence_from_selected_papers`, which performs vector search over the Qdrant collection filtered to the selected paper IDs only. This scoping ensures answers are grounded exclusively in the papers the user chose.
 
 `**qa_evaluate**` — Uses structured output to decide between two outcomes: `AnswerQuestion` (evidence is sufficient) or `AskForMoreEvidence` (evidence is weak — includes a `limitation` string that seeds the next retrieval attempt with a better query strategy).
 
-`**qa_answer**` — Synthesises a final answer from all accumulated evidence chunks, cites sources at the segment level, and explicitly acknowledges any gaps when the maximum iteration limit is reached.
+`**qa_answer**` — Synthesises a final answer from all accumulated evidence chunks. Always leads with the answer; if any selected papers were unindexed, a single caveat sentence is appended at the end noting that only the abstract was available for those papers.
 
 All three nodes emit `qa_status` events rendered as a real-time **Q&A Agent** status card.
 
@@ -117,16 +117,20 @@ All three nodes emit `qa_status` events rendered as a real-time **Q&A Agent** st
 
 ### Paper Ingestion Pipeline (Celery)
 
-Papers are ingested asynchronously via a Celery task so the UI never blocks:
+When a user adds a paper to their list, two things happen simultaneously: the paper is added to the agent's context (so it knows which papers the Q&A should be scoped to), and an ingestion task is pushed to the Redis queue for background processing.
+
+The **vector store is shared across all users**. The Celery worker checks whether the paper is already indexed before doing any work — if another user ingested it earlier, the task skips straight to done. This significantly reduces average ingestion time across the platform.
+
+If the paper is not yet indexed, the worker runs the full pipeline:
 
 1. **arXiv lookup** — searches arXiv by title to find a PDF URL
 2. **PDF download** — fetches the PDF to a temp file (`PDF_DOWNLOAD_DIR`)
-3. **Grobid parsing** — sends the PDF to a local Grobid container for structured full-text extraction
-4. **Chunking & embedding** — splits the extracted text into overlapping chunks and embeds each with OpenAI `text-embedding-3-small`
+3. **Grobid parsing** — sends the PDF to a local Grobid container for structured, section-aware full-text extraction
+4. **Chunking & embedding** — splits extracted text using a parent indexing strategy: smaller chunks are embedded for accurate vector retrieval; larger parent chunks are stored for richer LLM context at answer time. Embeddings use OpenAI `text-embedding-3-small`.
 5. **Qdrant upsert** — stores vectors with paper ID and section metadata for scoped retrieval
 6. **Cleanup** — the temp PDF is deleted regardless of success or failure
 
-If no arXiv PDF is available, the pipeline falls back to abstract-only ingestion.
+If no arXiv PDF is found, the task returns a clean failure with a specific error message. No partial data is written to Qdrant, so re-ingestion can be attempted cleanly.
 
 ---
 
